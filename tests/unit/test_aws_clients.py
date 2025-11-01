@@ -10,7 +10,9 @@ from botocore.exceptions import ClientError
 from src.aws_clients import (
     SecretsManagerClient,
     SecretValue,
-    create_secrets_manager_client,
+    create_secrets_manager_client
+)
+from src.exceptions import (
     AWSClientError,
     SecretNotFoundError,
     AccessDeniedError,

@@ -10,39 +10,18 @@ from typing import Optional, Dict, Any, Tuple
 from botocore.exceptions import ClientError
 from dataclasses import dataclass
 from src.logger import setup_logger
+from src.retry import with_retries
+from src.exceptions import (
+    AWSClientError,
+    SecretNotFoundError,
+    AccessDeniedError,
+    InvalidRequestError,
+    ThrottlingError,
+    InternalServiceError
+)
 
 # Initialize module logger
 logger = setup_logger('aws_clients')
-
-
-class AWSClientError(Exception):
-    """Base exception for AWS client errors"""
-    pass
-
-
-class SecretNotFoundError(AWSClientError):
-    """Raised when secret does not exist"""
-    pass
-
-
-class AccessDeniedError(AWSClientError):
-    """Raised when access is denied to AWS resource"""
-    pass
-
-
-class InvalidRequestError(AWSClientError):
-    """Raised when request is invalid"""
-    pass
-
-
-class ThrottlingError(AWSClientError):
-    """Raised when AWS throttles the request"""
-    pass
-
-
-class InternalServiceError(AWSClientError):
-    """Raised when AWS internal service error occurs"""
-    pass
 
 
 @dataclass
@@ -160,10 +139,14 @@ class SecretsManagerClient:
             else:
                 raise AWSClientError(f'STS error: {error_msg}')
 
+    @with_retries(max_attempts=5, min_wait=2, max_wait=32)
     def get_secret(self, secret_id: str, version_id: Optional[str] = None,
                    version_stage: Optional[str] = None) -> SecretValue:
         """
         Retrieve a secret value from Secrets Manager.
+
+        Automatically retries on transient errors (throttling, internal errors)
+        with exponential backoff (2s, 4s, 8s, 16s, 32s) and jitter.
 
         Args:
             secret_id: Secret name or ARN
@@ -177,8 +160,8 @@ class SecretsManagerClient:
             SecretNotFoundError: If secret does not exist
             AccessDeniedError: If access is denied
             InvalidRequestError: If request parameters are invalid
-            ThrottlingError: If request is throttled
-            InternalServiceError: If AWS internal error occurs
+            ThrottlingError: If request is throttled after all retries
+            InternalServiceError: If AWS internal error occurs after all retries
 
         Examples:
             >>> client = SecretsManagerClient('us-east-1')
@@ -212,6 +195,7 @@ class SecretsManagerClient:
         except ClientError as e:
             self._handle_client_error(e, f'get_secret({secret_id})')
 
+    @with_retries(max_attempts=5, min_wait=2, max_wait=32)
     def put_secret(self, secret_id: str, secret_value: str,
                    kms_key_id: Optional[str] = None,
                    description: Optional[str] = None,
@@ -220,6 +204,8 @@ class SecretsManagerClient:
         Create or update a secret in Secrets Manager.
 
         If secret exists, updates the value. If it doesn't exist, creates it.
+        Automatically retries on transient errors (throttling, internal errors)
+        with exponential backoff (2s, 4s, 8s, 16s, 32s) and jitter.
 
         Args:
             secret_id: Secret name (for new secrets) or name/ARN (for updates)
@@ -234,8 +220,8 @@ class SecretsManagerClient:
         Raises:
             AccessDeniedError: If access is denied
             InvalidRequestError: If request parameters are invalid
-            ThrottlingError: If request is throttled
-            InternalServiceError: If AWS internal error occurs
+            ThrottlingError: If request is throttled after all retries
+            InternalServiceError: If AWS internal error occurs after all retries
 
         Examples:
             >>> client = SecretsManagerClient('us-east-1')
@@ -284,9 +270,13 @@ class SecretsManagerClient:
         except ClientError as e:
             self._handle_client_error(e, f'put_secret({secret_id})')
 
+    @with_retries(max_attempts=5, min_wait=2, max_wait=32)
     def secret_exists(self, secret_id: str) -> bool:
         """
         Check if a secret exists.
+
+        Automatically retries on transient errors (throttling, internal errors)
+        with exponential backoff.
 
         Args:
             secret_id: Secret name or ARN

@@ -6,7 +6,8 @@ import os
 import pytest
 from unittest.mock import Mock, MagicMock, patch
 from src.handler import lambda_handler
-from src.aws_clients import SecretValue, SecretNotFoundError, AccessDeniedError, ThrottlingError
+from src.aws_clients import SecretValue
+from src.exceptions import SecretNotFoundError, AccessDeniedError, ThrottlingError
 from tests.fixtures.eventbridge_events import (
     PUT_SECRET_VALUE_EVENT,
     UPDATE_SECRET_EVENT,

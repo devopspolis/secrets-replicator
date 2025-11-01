@@ -13,14 +13,15 @@ from src.sedfile_loader import load_sedfile, SedfileLoadError
 from src.transformer import transform_secret, parse_sedfile, parse_json_mapping, TransformationError
 from src.logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
 from src.utils import get_secret_metadata, is_binary_data
-from src.aws_clients import (
-    create_secrets_manager_client,
+from src.aws_clients import create_secrets_manager_client
+from src.exceptions import (
     SecretNotFoundError,
     AccessDeniedError,
     InvalidRequestError,
     ThrottlingError,
     AWSClientError
 )
+from src.metrics import get_metrics_publisher
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -37,10 +38,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
     Raises:
         Does not raise - all errors are caught and logged
     """
-    # Initialize logger
+    # Initialize logger and metrics
     try:
         config = load_config_from_env()
         logger = setup_logger('secrets-replicator', level=config.log_level)
+        metrics = get_metrics_publisher(enabled=config.enable_metrics)
     except Exception as e:
         # Fallback logger if config fails
         logger = setup_logger('secrets-replicator', level='INFO')
@@ -167,6 +169,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     duration_ms=transform_duration
                 )
 
+                # Publish transformation metrics
+                metrics.publish_transformation_metrics(
+                    mode=config.transform_mode,
+                    input_size_bytes=input_size,
+                    output_size_bytes=output_size,
+                    duration_ms=transform_duration,
+                    rules_count=rules_count
+                )
+
         except SecretNotFoundError as e:
             log_error(logger, e, context={'stage': 'source_retrieval',
                                          'secret_id': secret_event.secret_id})
@@ -232,6 +243,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 duration_ms=duration_ms
             )
 
+            # Publish replication success metrics
+            metrics.publish_replication_success(
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                duration_ms=duration_ms,
+                transform_mode=config.transform_mode,
+                secret_size_bytes=len(transformed_value) if not is_binary else None
+            )
+
             return {
                 'statusCode': 200,
                 'body': 'Secret replicated successfully',
@@ -257,6 +277,15 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 duration_ms=duration_ms,
                 error=str(e)
             )
+
+            # Publish replication failure metrics
+            metrics.publish_replication_failure(
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                error_type='AccessDeniedError',
+                duration_ms=duration_ms
+            )
+
             return {
                 'statusCode': 403,
                 'body': f'Access denied to destination: {e}'
@@ -272,6 +301,23 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 duration_ms=duration_ms,
                 error=str(e)
             )
+
+            # Publish replication failure metrics
+            error_type = type(e).__name__
+            metrics.publish_replication_failure(
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                error_type=error_type,
+                duration_ms=duration_ms
+            )
+
+            # Track throttling events separately
+            if isinstance(e, ThrottlingError):
+                metrics.publish_throttling_event(
+                    operation='put_secret',
+                    region=config.dest_region
+                )
+
             return {
                 'statusCode': 500,
                 'body': f'Error writing to destination: {e}'
