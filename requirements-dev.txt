@@ -1,0 +1,24 @@
+# Include production dependencies
+-r requirements.txt
+
+# Testing framework
+pytest>=7.4.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# AWS service mocking
+moto>=4.2.0
+
+# Code formatting
+black>=23.0.0
+
+# Linting
+pylint>=3.0.0
+flake8>=6.1.0
+
+# Type checking
+mypy>=1.7.0
+boto3-stubs[secretsmanager,s3,sts]>=1.34.0
+
+# Pre-commit hooks
+pre-commit>=3.5.0

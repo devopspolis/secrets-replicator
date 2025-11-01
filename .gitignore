@@ -205,3 +205,18 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# AWS SAM
+.aws-sam/
+samconfig.toml
+packaged.yaml
+packaged-*.yaml
+
+# AWS credentials (never commit)
+credentials
+*.pem
+*.key
+
+# Local test data
+test-secrets/
+local-sedfiles/

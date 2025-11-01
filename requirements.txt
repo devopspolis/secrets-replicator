@@ -1,0 +1,12 @@
+# Core dependencies for AWS Lambda runtime
+boto3>=1.34.0
+botocore>=1.34.0
+
+# Retry logic with exponential backoff
+tenacity>=8.2.3
+
+# JSONPath support for JSON transformations
+jsonpath-ng>=1.6.0
+
+# Python 3.12+ compatibility
+typing-extensions>=4.8.0

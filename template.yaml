@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Secrets Replicator - AWS Lambda function for cross-region/cross-account
+  AWS Secrets Manager replication with value transformation
+
+Metadata:
+  AWS::ServerlessRepo::Application:
+    Name: secrets-replicator
+    Description: Replicate AWS Secrets Manager secrets across regions/accounts with value transformations
+    Author: DevOpsPolis
+    SpdxLicenseId: MIT
+    LicenseUrl: LICENSE
+    ReadmeUrl: README.md
+    HomePageUrl: https://github.com/devopspolis/secrets-replicator
+    SemanticVersion: 0.1.0
+    SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
+
+Globals:
+  Function:
+    Timeout: 60
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Tracing: Active
+
+Parameters:
+  SourceSecretPattern:
+    Type: String
+    Description: ARN pattern for source secrets (supports wildcards, e.g., arn:aws:secretsmanager:us-east-1:*:secret:source-*)
+    Default: '*'
+
+  DestinationRegion:
+    Type: String
+    Description: AWS region for destination secret
+    Default: us-west-2
+
+  DestinationSecretName:
+    Type: String
+    Description: Name for destination secret (leave empty to use source name)
+    Default: ''
+
+  DestinationAccountRoleArn:
+    Type: String
+    Description: IAM role ARN in destination account for cross-account replication (leave empty for same-account)
+    Default: ''
+
+  SedfileS3Bucket:
+    Type: String
+    Description: S3 bucket containing sedfile (leave empty to use bundled sedfile)
+    Default: ''
+
+  SedfileS3Key:
+    Type: String
+    Description: S3 key for sedfile (required if SedfileS3Bucket is provided)
+    Default: ''
+
+  TransformMode:
+    Type: String
+    Description: Transformation mode (sed or json)
+    Default: sed
+    AllowedValues:
+      - sed
+      - json
+
+  LogLevel:
+    Type: String
+    Description: Log level for Lambda function
+    Default: INFO
+    AllowedValues:
+      - DEBUG
+      - INFO
+      - WARN
+      - ERROR
+
+  EnableMetrics:
+    Type: String
+    Description: Enable CloudWatch custom metrics
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Resources:
+  # Lambda Function
+  SecretReplicatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-replicator
+      CodeUri: src/
+      Handler: handler.lambda_handler
+      Description: Replicate secrets across regions/accounts with transformations
+      MemorySize: 256
+      Environment:
+        Variables:
+          DEST_REGION: !Ref DestinationRegion
+          DEST_SECRET_NAME: !Ref DestinationSecretName
+          DEST_ACCOUNT_ROLE_ARN: !Ref DestinationAccountRoleArn
+          SEDFILE_S3_BUCKET: !Ref SedfileS3Bucket
+          SEDFILE_S3_KEY: !Ref SedfileS3Key
+          TRANSFORM_MODE: !Ref TransformMode
+          LOG_LEVEL: !Ref LogLevel
+          ENABLE_METRICS: !Ref EnableMetrics
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Read source secrets
+            - Sid: ReadSourceSecrets
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:DescribeSecret
+              Resource: !Ref SourceSecretPattern
+            # Read sedfile from S3 (if configured)
+            - Sid: ReadSedfile
+              Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub 'arn:aws:s3:::${SedfileS3Bucket}/*'
+              Condition:
+                StringNotEquals:
+                  's3:ExistingObjectTag/sedfile': ''
+            # Assume role for cross-account (if configured)
+            - Sid: AssumeDestinationRole
+              Effect: Allow
+              Action:
+                - sts:AssumeRole
+              Resource: !Ref DestinationAccountRoleArn
+              Condition:
+                StringNotEquals:
+                  'aws:SourceAccount': ''
+            # Publish CloudWatch metrics
+            - Sid: PublishMetrics
+              Effect: Allow
+              Action:
+                - cloudwatch:PutMetricData
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  'cloudwatch:namespace': 'SecretReplicator'
+      Events:
+        SecretUpdateEvent:
+          Type: CloudWatchEvent
+          Properties:
+            Pattern:
+              source:
+                - aws.secretsmanager
+              detail-type:
+                - AWS API Call via CloudTrail
+                - AWS Service Event
+              detail:
+                eventName:
+                  - PutSecretValue
+                  - UpdateSecret
+                  - ReplicateSecretToRegions
+                  - ReplicateSecretVersion
+
+  # Dead Letter Queue for failed events
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub ${AWS::StackName}-dlq
+      KmsMasterKeyId: alias/aws/sqs
+      MessageRetentionPeriod: 1209600  # 14 days
+      Tags:
+        - Key: Application
+          Value: SecretsReplicator
+
+  # CloudWatch Alarm for DLQ
+  DeadLetterQueueAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-dlq-messages
+      AlarmDescription: Alert when messages appear in DLQ
+      MetricName: ApproximateNumberOfMessagesVisible
+      Namespace: AWS/SQS
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Alarm for Lambda errors
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-lambda-errors
+      AlarmDescription: Alert when Lambda function errors occur
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SecretReplicatorFunction
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # SNS Topic for alerts
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub ${AWS::StackName}-alerts
+      DisplayName: Secrets Replicator Alerts
+      KmsMasterKeyId: alias/aws/sns
+
+Outputs:
+  SecretReplicatorFunctionArn:
+    Description: ARN of the Secret Replicator Lambda function
+    Value: !GetAtt SecretReplicatorFunction.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionArn
+
+  SecretReplicatorFunctionName:
+    Description: Name of the Secret Replicator Lambda function
+    Value: !Ref SecretReplicatorFunction
+    Export:
+      Name: !Sub ${AWS::StackName}-FunctionName
+
+  DeadLetterQueueUrl:
+    Description: URL of the Dead Letter Queue
+    Value: !Ref DeadLetterQueue
+    Export:
+      Name: !Sub ${AWS::StackName}-DLQUrl
+
+  DeadLetterQueueArn:
+    Description: ARN of the Dead Letter Queue
+    Value: !GetAtt DeadLetterQueue.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-DLQArn
+
+  AlertTopicArn:
+    Description: ARN of the SNS Alert Topic
+    Value: !Ref AlertTopic
+    Export:
+      Name: !Sub ${AWS::StackName}-AlertTopicArn
