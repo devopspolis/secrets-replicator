@@ -29,6 +29,7 @@ class ReplicatorConfig:
     transform_mode: str = 'sed'                   # Transformation mode (sed|json)
     log_level: str = 'INFO'                       # Log level
     enable_metrics: bool = True                   # Enable CloudWatch metrics
+    kms_key_id: Optional[str] = None              # KMS key for destination encryption
     dlq_arn: Optional[str] = None                 # Dead Letter Queue ARN
 
     # Advanced options
@@ -150,6 +151,7 @@ def load_config_from_env() -> ReplicatorConfig:
         TRANSFORM_MODE: Transformation mode (default: 'sed')
         LOG_LEVEL: Log level (default: 'INFO')
         ENABLE_METRICS: Enable CloudWatch metrics (default: 'true')
+        KMS_KEY_ID: KMS key ID for destination secret encryption
         DLQ_ARN: Dead Letter Queue ARN
         TIMEOUT_SECONDS: Regex timeout (default: 5)
         MAX_SECRET_SIZE: Maximum secret size (default: 65536)
@@ -185,6 +187,7 @@ def load_config_from_env() -> ReplicatorConfig:
     enable_metrics = enable_metrics_str in ('true', '1', 'yes', 'on')
 
     # Optional ARNs
+    kms_key_id = os.environ.get('KMS_KEY_ID', '').strip() or None
     dlq_arn = os.environ.get('DLQ_ARN', '').strip() or None
 
     # Numeric fields with defaults
@@ -200,6 +203,7 @@ def load_config_from_env() -> ReplicatorConfig:
         transform_mode=transform_mode,
         log_level=log_level,
         enable_metrics=enable_metrics,
+        kms_key_id=kms_key_id,
         dlq_arn=dlq_arn,
         timeout_seconds=timeout_seconds,
         max_secret_size=max_secret_size

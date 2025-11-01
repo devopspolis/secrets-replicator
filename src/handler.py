@@ -12,7 +12,15 @@ from src.event_parser import parse_eventbridge_event, validate_event_for_replica
 from src.sedfile_loader import load_sedfile, SedfileLoadError
 from src.transformer import transform_secret, parse_sedfile, parse_json_mapping, TransformationError
 from src.logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
-from src.utils import get_secret_metadata
+from src.utils import get_secret_metadata, is_binary_data
+from src.aws_clients import (
+    create_secrets_manager_client,
+    SecretNotFoundError,
+    AccessDeniedError,
+    InvalidRequestError,
+    ThrottlingError,
+    AWSClientError
+)
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -111,34 +119,163 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'body': f'Rule parsing error: {e}'
             }
 
-        # In a real implementation, we would:
-        # 1. Retrieve the source secret using boto3
-        # 2. Apply transformations
-        # 3. Write to destination
-        #
-        # For now, we'll return success as Phase 2 focuses on handler structure
-        # Phase 3 will implement the actual AWS integration
+        # Retrieve source secret
+        try:
+            source_client = create_secrets_manager_client(region=secret_event.region)
 
-        duration_ms = (time.time() - start_time) * 1000
+            log_secret_operation(logger, 'read', secret_event.secret_id,
+                               secret_arn=secret_event.secret_arn,
+                               region=secret_event.region)
 
-        log_replication(
-            logger,
-            source_region=secret_event.region,
-            dest_region=config.dest_region,
-            secret_id=secret_event.secret_id,
-            success=True,
-            duration_ms=duration_ms
-        )
+            source_secret = source_client.get_secret(secret_event.secret_id)
 
-        return {
-            'statusCode': 200,
-            'body': 'Success (handler structure complete, AWS integration pending Phase 3)',
-            'secretId': secret_event.secret_id,
-            'sourceRegion': secret_event.region,
-            'destRegion': config.dest_region,
-            'transformMode': config.transform_mode,
-            'rulesCount': rules_count
-        }
+            # Check if secret is binary (no transformation for binary secrets)
+            if source_secret.secret_binary:
+                log_event(logger, 'INFO', 'Binary secret detected, skipping transformation',
+                         secret_id=secret_event.secret_id)
+                transformed_value = None
+                is_binary = True
+            else:
+                is_binary = False
+                input_size = len(source_secret.secret_string)
+
+                # Validate secret size
+                if input_size > config.max_secret_size:
+                    max_kb = config.max_secret_size / 1024
+                    raise InvalidRequestError(
+                        f'Secret size ({input_size} bytes) exceeds maximum '
+                        f'({max_kb:.0f}KB)'
+                    )
+
+                # Apply transformations
+                transform_start = time.time()
+                transformed_value = transform_secret(
+                    source_secret.secret_string,
+                    mode=config.transform_mode,
+                    rules_content=sedfile_content
+                )
+                transform_duration = (time.time() - transform_start) * 1000
+
+                output_size = len(transformed_value)
+
+                log_transformation(
+                    logger,
+                    mode=config.transform_mode,
+                    rules_count=rules_count,
+                    input_size=input_size,
+                    output_size=output_size,
+                    duration_ms=transform_duration
+                )
+
+        except SecretNotFoundError as e:
+            log_error(logger, e, context={'stage': 'source_retrieval',
+                                         'secret_id': secret_event.secret_id})
+            return {
+                'statusCode': 404,
+                'body': f'Source secret not found: {e}'
+            }
+        except AccessDeniedError as e:
+            log_error(logger, e, context={'stage': 'source_retrieval',
+                                         'secret_id': secret_event.secret_id})
+            return {
+                'statusCode': 403,
+                'body': f'Access denied to source secret: {e}'
+            }
+        except (ThrottlingError, AWSClientError) as e:
+            log_error(logger, e, context={'stage': 'source_retrieval',
+                                         'secret_id': secret_event.secret_id})
+            return {
+                'statusCode': 500,
+                'body': f'Error retrieving source secret: {e}'
+            }
+
+        # Write to destination
+        try:
+            dest_client = create_secrets_manager_client(
+                region=config.dest_region,
+                role_arn=config.dest_account_role_arn
+            )
+
+            # Determine destination secret name
+            dest_secret_name = config.dest_secret_name or secret_event.secret_id
+
+            log_secret_operation(logger, 'write', dest_secret_name,
+                               region=config.dest_region)
+
+            # Write secret (binary or string)
+            if is_binary:
+                # For binary secrets, we don't transform, just replicate
+                # Note: put_secret currently only supports string secrets
+                # Binary replication would need additional implementation
+                log_event(logger, 'WARNING', 'Binary secret replication not yet implemented',
+                         secret_id=dest_secret_name)
+                return {
+                    'statusCode': 501,
+                    'body': 'Binary secret replication not implemented'
+                }
+            else:
+                response = dest_client.put_secret(
+                    secret_id=dest_secret_name,
+                    secret_value=transformed_value,
+                    kms_key_id=config.kms_key_id,
+                    description=f'Replicated from {secret_event.region}/{secret_event.secret_id}'
+                )
+
+            duration_ms = (time.time() - start_time) * 1000
+
+            log_replication(
+                logger,
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                secret_id=secret_event.secret_id,
+                success=True,
+                duration_ms=duration_ms
+            )
+
+            return {
+                'statusCode': 200,
+                'body': 'Secret replicated successfully',
+                'sourceSecretId': secret_event.secret_id,
+                'sourceRegion': secret_event.region,
+                'destSecretId': dest_secret_name,
+                'destRegion': config.dest_region,
+                'destArn': response['ARN'],
+                'destVersionId': response['VersionId'],
+                'transformMode': config.transform_mode,
+                'rulesCount': rules_count,
+                'durationMs': round(duration_ms, 2)
+            }
+
+        except AccessDeniedError as e:
+            duration_ms = (time.time() - start_time) * 1000
+            log_replication(
+                logger,
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                secret_id=secret_event.secret_id,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(e)
+            )
+            return {
+                'statusCode': 403,
+                'body': f'Access denied to destination: {e}'
+            }
+        except (ThrottlingError, AWSClientError) as e:
+            duration_ms = (time.time() - start_time) * 1000
+            log_replication(
+                logger,
+                source_region=secret_event.region,
+                dest_region=config.dest_region,
+                secret_id=secret_event.secret_id,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(e)
+            )
+            return {
+                'statusCode': 500,
+                'body': f'Error writing to destination: {e}'
+            }
 
     except Exception as e:
         # Catch-all for unexpected errors
