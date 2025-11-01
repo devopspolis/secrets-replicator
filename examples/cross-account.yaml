@@ -1,0 +1,30 @@
+# Example: Cross-Account, Same Region
+# Use case: Replicate secrets from dev account to prod account
+#
+# Deploy with:
+#   sam deploy --parameter-overrides-file examples/cross-account.yaml
+
+Parameters:
+  SourceSecretPattern: 'arn:aws:secretsmanager:us-east-1:111111111111:secret:shared-*'
+  DestinationRegion: 'us-east-1'
+  DestinationSecretName: ''  # Use same name as source
+  DestinationAccountRoleArn: 'arn:aws:iam::222222222222:role/SecretReplicatorDestRole'
+  SedfileS3Bucket: ''
+  SedfileS3Key: ''
+  TransformMode: 'json'
+  LogLevel: 'INFO'
+  EnableMetrics: 'true'
+
+# Notes:
+# - Source account: 111111111111 (dev)
+# - Destination account: 222222222222 (prod)
+# - Uses JSON transformation mode
+# - Requires cross-account IAM role in destination account
+# - Role must have trust policy allowing source Lambda to assume it
+#
+# Required setup in destination account:
+# 1. Create IAM role: SecretReplicatorDestRole
+# 2. Attach policy with secretsmanager:CreateSecret, PutSecretValue permissions
+# 3. Add trust policy allowing source account Lambda role to assume it
+#
+# See docs/iam-policies.md for detailed IAM setup instructions

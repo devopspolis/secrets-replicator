@@ -1,0 +1,31 @@
+# Example: Cross-Account, Cross-Region
+# Use case: Replicate secrets from production (us-east-1) to DR account (us-west-2)
+#
+# Deploy with:
+#   sam deploy --parameter-overrides-file examples/cross-account-region.yaml
+
+Parameters:
+  SourceSecretPattern: 'arn:aws:secretsmanager:us-east-1:111111111111:secret:prod-*'
+  DestinationRegion: 'us-west-2'
+  DestinationSecretName: ''  # Use same name as source
+  DestinationAccountRoleArn: 'arn:aws:iam::222222222222:role/SecretReplicatorDestRole'
+  SedfileS3Bucket: 'prod-config-bucket'
+  SedfileS3Key: 'sedfiles/prod-to-dr.sed'
+  TransformMode: 'sed'
+  LogLevel: 'INFO'
+  EnableMetrics: 'true'
+
+# Notes:
+# - Source: Account 111111111111, us-east-1 (production)
+# - Destination: Account 222222222222, us-west-2 (DR)
+# - Uses sedfile from S3 to transform region/environment-specific values
+# - Requires cross-account IAM role in destination account
+# - Most complex scenario - tests all features
+#
+# Required setup:
+# 1. S3 bucket 'prod-config-bucket' in source account with sedfile
+# 2. IAM role 'SecretReplicatorDestRole' in destination account
+# 3. Trust policy on destination role allowing source Lambda
+# 4. External ID for enhanced security (recommended)
+#
+# See docs/iam-policies.md for detailed setup instructions

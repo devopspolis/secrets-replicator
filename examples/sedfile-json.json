@@ -1,0 +1,55 @@
+{
+  "description": "Example JSON transformation mapping for secrets with JSON structure",
+  "transformations": [
+    {
+      "path": "$.database.host",
+      "find": "db-dev-01.us-east-1.rds.amazonaws.com",
+      "replace": "db-prod-01.us-west-2.rds.amazonaws.com"
+    },
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "us-west-2"
+    },
+    {
+      "path": "$.api.endpoint",
+      "find": "https://api.dev.example.com",
+      "replace": "https://api.prod.example.com"
+    },
+    {
+      "path": "$.redis.host",
+      "find": "redis-dev.cache.us-east-1.amazonaws.com",
+      "replace": "redis-prod.cache.us-west-2.amazonaws.com"
+    },
+    {
+      "path": "$.s3.bucket",
+      "find": "my-dev-bucket",
+      "replace": "my-prod-bucket"
+    },
+    {
+      "path": "$.environment",
+      "find": "development",
+      "replace": "production"
+    },
+    {
+      "path": "$.config.region",
+      "find": "us-east-1",
+      "replace": "us-west-2"
+    },
+    {
+      "path": "$.sqs.queue_url",
+      "find": "https://sqs.us-east-1.amazonaws.com/123456789012/dev-queue",
+      "replace": "https://sqs.us-west-2.amazonaws.com/123456789012/prod-queue"
+    },
+    {
+      "path": "$.dynamodb.table",
+      "find": "dev-users-table",
+      "replace": "prod-users-table"
+    },
+    {
+      "path": "$.kms.key_id",
+      "find": "arn:aws:kms:us-east-1:123456789012:key/dev-key-id",
+      "replace": "arn:aws:kms:us-west-2:123456789012:key/prod-key-id"
+    }
+  ]
+}

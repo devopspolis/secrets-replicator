@@ -1,0 +1,23 @@
+# Example: Same Account, Cross-Region
+# Use case: Replicate secrets from us-east-1 to us-west-2 for disaster recovery
+#
+# Deploy with:
+#   sam deploy --parameter-overrides-file examples/cross-region.yaml
+
+Parameters:
+  SourceSecretPattern: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:app-*'
+  DestinationRegion: 'us-west-2'
+  DestinationSecretName: ''  # Use same name as source
+  DestinationAccountRoleArn: ''
+  SedfileS3Bucket: 'my-sedfile-bucket'
+  SedfileS3Key: 'sedfiles/region-swap.sed'
+  TransformMode: 'sed'
+  LogLevel: 'INFO'
+  EnableMetrics: 'true'
+
+# Notes:
+# - Source secrets in us-east-1, destination in us-west-2
+# - Uses sedfile from S3 to transform region-specific values
+# - Same AWS account (no cross-account role needed)
+# - Destination secret inherits source name
+# - Common pattern for DR/multi-region deployments

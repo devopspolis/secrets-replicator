@@ -114,24 +114,57 @@ Resources:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
               Resource: !Ref SourceSecretPattern
+
+            # Write destination secrets (same account)
+            - Sid: WriteDestinationSecrets
+              Effect: Allow
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:DescribeSecret
+                - secretsmanager:TagResource
+              Resource: '*'
+
+            # KMS permissions for decrypting source secrets
+            - Sid: KMSDecryptSource
+              Effect: Allow
+              Action:
+                - kms:Decrypt
+                - kms:DescribeKey
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
+            # KMS permissions for encrypting destination secrets
+            - Sid: KMSEncryptDestination
+              Effect: Allow
+              Action:
+                - kms:Encrypt
+                - kms:GenerateDataKey
+                - kms:DescribeKey
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  'kms:ViaService':
+                    - !Sub 'secretsmanager.${DestinationRegion}.amazonaws.com'
+                    - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+
             # Read sedfile from S3 (if configured)
             - Sid: ReadSedfile
               Effect: Allow
               Action:
                 - s3:GetObject
+                - s3:GetObjectVersion
               Resource: !Sub 'arn:aws:s3:::${SedfileS3Bucket}/*'
-              Condition:
-                StringNotEquals:
-                  's3:ExistingObjectTag/sedfile': ''
+
             # Assume role for cross-account (if configured)
             - Sid: AssumeDestinationRole
               Effect: Allow
               Action:
                 - sts:AssumeRole
-              Resource: !Ref DestinationAccountRoleArn
-              Condition:
-                StringNotEquals:
-                  'aws:SourceAccount': ''
+              Resource: '*'
+
             # Publish CloudWatch metrics
             - Sid: PublishMetrics
               Effect: Allow
@@ -140,7 +173,14 @@ Resources:
               Resource: '*'
               Condition:
                 StringEquals:
-                  'cloudwatch:namespace': 'SecretReplicator'
+                  'cloudwatch:namespace': 'SecretsReplicator'
+
+            # Send to Dead Letter Queue
+            - Sid: SendToDLQ
+              Effect: Allow
+              Action:
+                - sqs:SendMessage
+              Resource: !GetAtt DeadLetterQueue.Arn
       Events:
         SecretUpdateEvent:
           Type: CloudWatchEvent
@@ -204,6 +244,57 @@ Resources:
       Dimensions:
         - Name: FunctionName
           Value: !Ref SecretReplicatorFunction
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Alarm for high replication failure rate
+  ReplicationFailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-replication-failures
+      AlarmDescription: Alert when replication failure rate is high
+      MetricName: ReplicationFailure
+      Namespace: SecretsReplicator
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Alarm for high throttling rate
+  ThrottlingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-throttling-events
+      AlarmDescription: Alert when AWS API throttling occurs frequently
+      MetricName: ThrottlingEvent
+      Namespace: SecretsReplicator
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertTopic
+
+  # CloudWatch Alarm for high replication duration
+  HighDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-high-duration
+      AlarmDescription: Alert when replication duration is consistently high
+      MetricName: ReplicationDuration
+      Namespace: SecretsReplicator
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
       AlarmActions:
         - !Ref AlertTopic
 

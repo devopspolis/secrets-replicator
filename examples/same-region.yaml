@@ -1,0 +1,22 @@
+# Example: Same Account, Same Region
+# Use case: Replicate with transformation to a different secret name in the same region
+#
+# Deploy with:
+#   sam deploy --parameter-overrides-file examples/same-region.yaml
+
+Parameters:
+  SourceSecretPattern: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:source-*'
+  DestinationRegion: 'us-east-1'
+  DestinationSecretName: 'destination-secret'
+  DestinationAccountRoleArn: ''
+  SedfileS3Bucket: ''
+  SedfileS3Key: ''
+  TransformMode: 'sed'
+  LogLevel: 'INFO'
+  EnableMetrics: 'true'
+
+# Notes:
+# - Both source and destination are in us-east-1
+# - Uses bundled sedfile (no S3 configuration)
+# - Destination secret will have a different name than source
+# - Same AWS account (no cross-account role needed)
