@@ -1,0 +1,153 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
+
+      - name: Validate version format
+        run: |
+          if ! echo "${{ inputs.version }}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$'; then
+            echo "❌ Invalid version format: ${{ inputs.version }}"
+            echo "Expected format: v1.0.0 or v1.0.0-beta"
+            exit 1
+          fi
+          echo "✅ Version format valid"
+
+      - name: Check if tag exists
+        run: |
+          if git rev-parse "${{ inputs.version }}" >/dev/null 2>&1; then
+            echo "❌ Tag ${{ inputs.version }} already exists"
+            exit 1
+          fi
+          echo "✅ Tag does not exist"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Run tests
+        run: |
+          pytest tests/unit/ -v --cov=src --cov-fail-under=90
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get the previous tag
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "## Changes" > release-notes.md
+            echo "" >> release-notes.md
+            echo "Initial release" >> release-notes.md
+          else
+            echo "## Changes since $PREVIOUS_TAG" > release-notes.md
+            echo "" >> release-notes.md
+
+            # Get commits since last tag
+            git log $PREVIOUS_TAG..HEAD --pretty=format:"- %s (%h)" >> release-notes.md
+          fi
+
+          echo "" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "## Installation" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "\`\`\`bash" >> release-notes.md
+          echo "# Deploy using SAM CLI" >> release-notes.md
+          echo "sam deploy --guided" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "# Or use deployment script" >> release-notes.md
+          echo "./scripts/deploy.sh production" >> release-notes.md
+          echo "\`\`\`" >> release-notes.md
+
+          cat release-notes.md
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ inputs.version }}" -m "Release ${{ inputs.version }}"
+          git push origin "${{ inputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ inputs.version }}
+          name: Release ${{ inputs.version }}
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update CHANGELOG.md
+        run: |
+          # Backup existing changelog
+          if [ -f CHANGELOG.md ]; then
+            cp CHANGELOG.md CHANGELOG.md.bak
+          fi
+
+          # Create new changelog entry
+          echo "# Changelog" > CHANGELOG.new.md
+          echo "" >> CHANGELOG.new.md
+          echo "## [${{ inputs.version }}] - $(date +%Y-%m-%d)" >> CHANGELOG.new.md
+          echo "" >> CHANGELOG.new.md
+          cat release-notes.md | grep -v "^#" >> CHANGELOG.new.md
+          echo "" >> CHANGELOG.new.md
+
+          # Append old changelog if it exists
+          if [ -f CHANGELOG.md ]; then
+            tail -n +2 CHANGELOG.md >> CHANGELOG.new.md
+          fi
+
+          mv CHANGELOG.new.md CHANGELOG.md
+
+      - name: Commit changelog update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "docs: update CHANGELOG for ${{ inputs.version }}" || echo "No changes to commit"
+          git push origin main || echo "No changes to push"
+
+      - name: Post release summary
+        run: |
+          echo "## Release Created 🎉" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Pre-release:** ${{ inputs.prerelease }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ inputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. The deployment workflow will automatically trigger" >> $GITHUB_STEP_SUMMARY
+          echo "2. Monitor the deployment in the Actions tab" >> $GITHUB_STEP_SUMMARY
+          echo "3. Verify the deployment in AWS Console" >> $GITHUB_STEP_SUMMARY

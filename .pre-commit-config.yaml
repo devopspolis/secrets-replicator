@@ -1,0 +1,127 @@
+# Pre-commit hooks for Secrets Replicator
+# Install: pip install pre-commit
+# Setup: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^tests/fixtures/
+      - id: end-of-file-fixer
+        exclude: ^tests/fixtures/
+      - id: check-yaml
+        args: ['--unsafe']  # Allow custom YAML tags in CloudFormation
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # Python code formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 23.12.1
+    hooks:
+      - id: black
+        language_version: python3.12
+        args: ['--line-length=100']
+
+  # Import sorting with isort
+  - repo: https://github.com/PyCQA/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ['--profile', 'black', '--line-length', '100']
+
+  # Python linting with pylint
+  - repo: https://github.com/PyCQA/pylint
+    rev: v3.0.3
+    hooks:
+      - id: pylint
+        args:
+          - '--fail-under=8.0'
+          - '--disable=fixme,duplicate-code,missing-module-docstring,missing-class-docstring,missing-function-docstring'
+        additional_dependencies:
+          - boto3>=1.34.0
+          - tenacity>=8.2.3
+          - jsonpath-ng>=1.6.0
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        args: ['--ignore-missing-imports', '--no-strict-optional']
+        additional_dependencies:
+          - boto3-stubs[secretsmanager,s3,sts,cloudwatch,sqs]>=1.34.0
+          - types-jsonschema
+
+  # Security scanning with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+        additional_dependencies: ['bandit[toml]']
+
+  # Check for common security issues
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: package.lock.json
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+      - id: shellcheck
+        args: ['--severity=warning']
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.33.0
+    hooks:
+      - id: yamllint
+        args: ['-d', '{extends: default, rules: {line-length: {max: 120}, document-start: disable}}']
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix']
+
+  # Fast unit tests (only critical tests)
+  - repo: local
+    hooks:
+      - id: pytest-quick
+        name: pytest-quick
+        entry: bash -c 'pytest tests/unit/test_config.py tests/unit/test_utils.py -v --tb=short -x'
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [commit]
+
+# Configuration for specific stages
+default_stages: [commit]
+
+# Exclude patterns
+exclude: |
+  (?x)^(
+    \.aws-sam/.*|
+    \.venv/.*|
+    venv/.*|
+    htmlcov/.*|
+    \.pytest_cache/.*|
+    .*\.egg-info/.*|
+    build/.*|
+    dist/.*
+  )$
