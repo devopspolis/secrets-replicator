@@ -1088,4 +1088,4 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ---
 
-**Made with ❤️ by DevOps Polis**
+**Made with ❤️ by Devopspolis**
