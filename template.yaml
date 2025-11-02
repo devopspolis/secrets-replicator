@@ -7,14 +7,30 @@ Description: >
 Metadata:
   AWS::ServerlessRepo::Application:
     Name: secrets-replicator
-    Description: Replicate AWS Secrets Manager secrets across regions/accounts with value transformations
-    Author: DevOpsPolis
+    Description: >
+      Event-driven AWS Secrets Manager replication with transformation across regions and accounts.
+      Fill the gap in AWS native replication by transforming secret values during replication.
+    Author: DevOps Polis
     SpdxLicenseId: MIT
     LicenseUrl: LICENSE
     ReadmeUrl: README.md
     HomePageUrl: https://github.com/devopspolis/secrets-replicator
-    SemanticVersion: 0.1.0
+    SemanticVersion: 1.0.0
     SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
+    Labels:
+      - secrets-manager
+      - secrets
+      - replication
+      - cross-region
+      - cross-account
+      - disaster-recovery
+      - security
+      - lambda
+      - eventbridge
+      - kms
+      - transformation
+      - sed
+      - json
 
 Globals:
   Function:
