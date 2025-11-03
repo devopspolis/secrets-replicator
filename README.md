@@ -210,14 +210,17 @@ cd secrets-replicator
 sam build
 sam deploy --guided
 
-# 3. Configure parameters when prompted:
-#    - SOURCE_SECRET_ARN: arn:aws:secretsmanager:us-east-1:123456789012:secret:my-source-secret
-#    - DEST_SECRET_NAME: my-destination-secret
-#    - DEST_REGION: us-west-2
-#    - TRANSFORM_MODE: sed
-#    - SED_SCRIPT: s/us-east-1/us-west-2/g
+# 3. Create transformation secret:
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string 's/us-east-1/us-west-2/g'
 
-# 4. Test by updating source secret
+# 4. Tag source secret to use transformation:
+aws secretsmanager tag-resource \
+  --secret-id my-source-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
+
+# 5. Test by updating source secret
 aws secretsmanager put-secret-value \
   --secret-id my-source-secret \
   --secret-string '{"host":"db.us-east-1.amazonaws.com","port":"5432"}'
@@ -407,6 +410,19 @@ TRANSFORM_MODE=sed
 }
 ```
 
+**Setup**:
+```bash
+# 1. Create transformation secret for account ID swap
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/account-swap \
+  --secret-string 's/111111111111/222222222222/g'
+
+# 2. Tag source secret to use transformation
+aws secretsmanager tag-resource \
+  --secret-id app-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=account-swap
+```
+
 **Configuration**:
 ```bash
 SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:111111111111:secret:app-credentials
@@ -415,7 +431,6 @@ DEST_REGION=us-east-1
 DEST_ACCOUNT_ROLE_ARN=arn:aws:iam::222222222222:role/SecretsReplicatorDestRole
 DEST_ROLE_EXTERNAL_ID=my-secure-external-id-12345
 TRANSFORM_MODE=sed
-SED_SCRIPT=s/111111111111/222222222222/g
 ```
 
 **Result**: Secrets replicated to application account with account-specific ARNs.
@@ -446,13 +461,25 @@ SED_SCRIPT=s/111111111111/222222222222/g
 }
 ```
 
+**Setup**:
+```bash
+# 1. Create transformation secret with JSON mapping
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/dev-to-prod \
+  --secret-string '{"$.api_endpoint": "https://api.prod.example.com", "$.database": "prod-database", "$.log_level": "INFO", "$.cache_ttl": "3600"}'
+
+# 2. Tag source secret to use transformation
+aws secretsmanager tag-resource \
+  --secret-id app-config-dev \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=dev-to-prod
+```
+
 **Configuration**:
 ```bash
 SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:app-config-dev
 DEST_SECRET_NAME=app-config-prod
 DEST_REGION=us-east-1
 TRANSFORM_MODE=json
-JSON_MAPPING='{"$.api_endpoint": "https://api.prod.example.com", "$.database": "prod-database", "$.log_level": "INFO", "$.cache_ttl": "3600"}'
 ```
 
 **Destination Secret** (Prod):
@@ -1096,7 +1123,20 @@ See [docs/cicd.md](docs/cicd.md) for CI/CD workflow details.
 
 ### Q: How do I rollback a bad transformation?
 
-**A**: Update `SED_SCRIPT` or `JSON_MAPPING` and trigger replication by updating source secret.
+**A**: Update the transformation secret with corrected rules, or use `AWSPREVIOUS` version stage to rollback:
+```bash
+# Option 1: Update transformation secret
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/transformations/my-transform \
+  --secret-string 's/corrected/pattern/g'
+
+# Option 2: Rollback to previous version
+aws secretsmanager update-secret-version-stage \
+  --secret-id secrets-replicator/transformations/my-transform \
+  --version-stage AWSCURRENT \
+  --move-to-version-id <previous-version-id>
+```
+Then trigger replication by updating the source secret.
 
 ### Q: Is there a Terraform version?
 
