@@ -5,11 +5,11 @@ Entry point for AWS Lambda function that replicates secrets across
 regions and accounts with transformations.
 """
 
+import re
 import time
 from typing import Dict, Any
-from src.config import load_config_from_env, ConfigurationError
+from src.config import load_config_from_env, ConfigurationError, ReplicatorConfig
 from src.event_parser import parse_eventbridge_event, validate_event_for_replication, EventParsingError
-from src.sedfile_loader import load_sedfile, SedfileLoadError
 from src.transformer import transform_secret, parse_sedfile, parse_json_mapping, TransformationError
 from src.logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
 from src.utils import get_secret_metadata, is_binary_data
@@ -22,6 +22,69 @@ from src.exceptions import (
     AWSClientError
 )
 from src.metrics import get_metrics_publisher
+
+
+def should_replicate(secret_name: str, tags: Dict[str, str], config: ReplicatorConfig) -> bool:
+    """
+    Determine if a secret should be replicated based on filtering rules.
+
+    Implements multi-layered filtering logic with defense-in-depth:
+    1. Hardcoded exclusion for transformation secrets (highest priority)
+    2. Exclude tags (explicitly skip replication)
+    3. Include filters with OR logic (pattern, list, or tags)
+
+    Args:
+        secret_name: Name of the secret to check
+        tags: Secret tags as key-value dict
+        config: ReplicatorConfig with filtering settings
+
+    Returns:
+        True if secret should be replicated, False otherwise
+
+    Examples:
+        >>> config = ReplicatorConfig(dest_region='us-west-2')
+        >>> should_replicate('prod-db', {}, config)
+        True
+        >>> should_replicate('transformations/my-sed', {}, config)
+        False
+    """
+    # LAYER 1: Hardcoded exclusion for transformation secrets (defense-in-depth)
+    if secret_name.startswith(config.transformation_secret_prefix):
+        # This should never happen due to IAM Deny policy, but provides additional safety
+        return False
+
+    # LAYER 2: Exclude tags (explicitly skip replication)
+    for key, value in config.source_exclude_tags:
+        if tags.get(key) == value:
+            return False
+
+    # LAYER 3: Include filters (OR logic)
+    # If no include filters configured, replicate all (except excluded above)
+    has_include_filters = (
+        config.source_secret_pattern is not None or
+        len(config.source_secret_list) > 0 or
+        len(config.source_include_tags) > 0
+    )
+
+    if not has_include_filters:
+        return True
+
+    # Check pattern match
+    if config.source_secret_pattern:
+        if re.match(config.source_secret_pattern, secret_name):
+            return True
+
+    # Check explicit list
+    if secret_name in config.source_secret_list:
+        return True
+
+    # Check include tags (any match)
+    for key, value in config.source_include_tags:
+        if tags.get(key) == value:
+            return True
+
+    # No include filter matched
+    return False
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -86,20 +149,102 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         config.source_region = secret_event.region
         config.source_account_id = secret_event.account_id
 
-        # Load sedfile/transformation rules
+        # Retrieve secret tags for filtering
         try:
-            sedfile_content = load_sedfile(
-                bucket=config.sedfile_s3_bucket,
-                key=config.sedfile_s3_key
-            )
-            log_event(logger, 'INFO', 'Sedfile loaded',
-                     mode=config.transform_mode,
-                     source='s3' if config.sedfile_s3_bucket else 'bundled')
-        except SedfileLoadError as e:
-            log_error(logger, e, context={'stage': 'sedfile_load'})
+            source_client = create_secrets_manager_client(region=secret_event.region)
+
+            # Get tags for filtering (lightweight operation)
+            secret_tags = source_client.get_secret_tags(secret_event.secret_id)
+
+            log_event(logger, 'DEBUG', 'Retrieved secret tags for filtering',
+                     secret_id=secret_event.secret_id,
+                     tag_count=len(secret_tags))
+        except Exception as e:
+            # If we can't retrieve tags, log warning but continue without tags
+            log_event(logger, 'WARNING', 'Failed to retrieve secret tags, filtering without tags',
+                     secret_id=secret_event.secret_id,
+                     error=str(e))
+            secret_tags = {}
+
+        # Check if secret should be replicated (filtering logic)
+        if not should_replicate(secret_event.secret_id, secret_tags, config):
+            log_event(logger, 'INFO', 'Secret filtered out - not replicating',
+                     secret_id=secret_event.secret_id,
+                     reason='Did not match filtering criteria')
             return {
-                'statusCode': 500,
-                'body': f'Sedfile load error: {e}'
+                'statusCode': 200,
+                'body': 'Secret skipped (filtered out)',
+                'secretId': secret_event.secret_id,
+                'reason': 'Did not match filtering criteria'
+            }
+
+        # Check for transformation secret tags (ADR-002: Transformation Secrets)
+        transform_secret_name = secret_tags.get('SecretsReplicator:TransformSecretName')
+        transform_mode_override = secret_tags.get('SecretsReplicator:TransformMode')
+
+        # Override transform mode if specified in tags
+        if transform_mode_override:
+            if transform_mode_override not in ['sed', 'json']:
+                log_event(logger, 'WARNING', 'Invalid transform mode in tag, using config default',
+                         secret_id=secret_event.secret_id,
+                         tag_value=transform_mode_override,
+                         using=config.transform_mode)
+            else:
+                config.transform_mode = transform_mode_override
+                log_event(logger, 'INFO', 'Transform mode overridden by tag',
+                         secret_id=secret_event.secret_id,
+                         transform_mode=transform_mode_override)
+
+        # Load transformation rules (from transformation secret or S3/bundled)
+        if transform_secret_name:
+            # Load transformation from transformation secret
+            log_event(logger, 'INFO', 'Loading transformation from transformation secret',
+                     secret_id=secret_event.secret_id,
+                     transform_secret=transform_secret_name)
+
+            try:
+                transformation_secret_value = source_client.get_secret(transform_secret_name)
+
+                if transformation_secret_value.secret_binary:
+                    raise InvalidRequestError(
+                        f'Transformation secret {transform_secret_name} is binary (must be text)'
+                    )
+
+                sedfile_content = transformation_secret_value.secret_string
+                log_event(logger, 'INFO', 'Transformation secret loaded successfully',
+                         transform_secret=transform_secret_name,
+                         size_bytes=len(sedfile_content))
+
+            except SecretNotFoundError as e:
+                log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                             'transform_secret': transform_secret_name})
+                return {
+                    'statusCode': 404,
+                    'body': f'Transformation secret not found: {transform_secret_name}'
+                }
+            except AccessDeniedError as e:
+                log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                             'transform_secret': transform_secret_name})
+                return {
+                    'statusCode': 403,
+                    'body': f'Access denied to transformation secret: {transform_secret_name}'
+                }
+            except (ThrottlingError, AWSClientError) as e:
+                log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                             'transform_secret': transform_secret_name})
+                return {
+                    'statusCode': 500,
+                    'body': f'Error loading transformation secret: {e}'
+                }
+
+        else:
+            # Transformation secret is required
+            log_event(logger, 'ERROR', 'No transformation secret specified',
+                     secret_id=secret_event.secret_id,
+                     note='Secret must have SecretsReplicator:TransformSecretName tag')
+            return {
+                'statusCode': 400,
+                'body': 'No transformation secret specified. Secret must have SecretsReplicator:TransformSecretName tag.'
             }
 
         # Parse transformation rules
@@ -209,6 +354,24 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
             # Determine destination secret name
             dest_secret_name = config.dest_secret_name or secret_event.secret_id
+
+            # Check if destination would be a transformation secret (defense-in-depth)
+            if dest_secret_name.startswith(config.transformation_secret_prefix):
+                log_event(logger, 'ERROR', 'Cannot replicate to transformation secret',
+                         source_secret=secret_event.secret_id,
+                         dest_secret=dest_secret_name,
+                         transformation_prefix=config.transformation_secret_prefix)
+                return {
+                    'statusCode': 400,
+                    'body': f'Cannot replicate to transformation secret: {dest_secret_name}'
+                }
+
+            # Log non-standard configuration if custom destination name is used
+            if config.dest_secret_name:
+                log_event(logger, 'WARNING', 'Using custom destination secret name (non-standard)',
+                         source_secret=secret_event.secret_id,
+                         dest_secret=dest_secret_name,
+                         note='Standard DR/HA pattern uses identical names across regions')
 
             log_secret_operation(logger, 'write', dest_secret_name,
                                region=config.dest_region)

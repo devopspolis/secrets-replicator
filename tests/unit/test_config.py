@@ -8,7 +8,6 @@ from src.config import (
     ReplicatorConfig,
     ConfigurationError,
     load_config_from_env,
-    get_sedfile_location,
     is_cross_account
 )
 
@@ -30,8 +29,6 @@ class TestReplicatorConfig:
             dest_region='us-west-2',
             dest_secret_name='override-name',
             dest_account_role_arn='arn:aws:iam::999:role/MyRole',
-            sedfile_s3_bucket='my-bucket',
-            sedfile_s3_key='sedfiles/default.sed',
             transform_mode='json',
             log_level='DEBUG',
             enable_metrics=False,
@@ -43,8 +40,6 @@ class TestReplicatorConfig:
         assert config.dest_region == 'us-west-2'
         assert config.dest_secret_name == 'override-name'
         assert config.dest_account_role_arn == 'arn:aws:iam::999:role/MyRole'
-        assert config.sedfile_s3_bucket == 'my-bucket'
-        assert config.sedfile_s3_key == 'sedfiles/default.sed'
         assert config.transform_mode == 'json'
         assert config.log_level == 'DEBUG'
         assert config.enable_metrics is False
@@ -81,24 +76,6 @@ class TestReplicatorConfig:
         """Test that WARN is normalized to WARNING"""
         config = ReplicatorConfig(dest_region='us-west-2', log_level='WARN')
         assert config.log_level == 'WARNING'
-
-    def test_config_s3_bucket_without_key_raises_error(self):
-        """Test that S3 bucket without key raises error"""
-        with pytest.raises(ConfigurationError, match="Both sedfile_s3_bucket and sedfile_s3_key"):
-            ReplicatorConfig(
-                dest_region='us-west-2',
-                sedfile_s3_bucket='my-bucket'
-                # Missing sedfile_s3_key
-            )
-
-    def test_config_s3_key_without_bucket_raises_error(self):
-        """Test that S3 key without bucket raises error"""
-        with pytest.raises(ConfigurationError, match="Both sedfile_s3_bucket and sedfile_s3_key"):
-            ReplicatorConfig(
-                dest_region='us-west-2',
-                sedfile_s3_key='my-key'
-                # Missing sedfile_s3_bucket
-            )
 
     def test_config_invalid_role_arn(self):
         """Test that invalid role ARN raises error"""
@@ -172,8 +149,6 @@ class TestLoadConfigFromEnv:
         monkeypatch.setenv('DEST_REGION', 'us-west-2')
         monkeypatch.setenv('DEST_SECRET_NAME', 'my-dest-secret')
         monkeypatch.setenv('DEST_ACCOUNT_ROLE_ARN', 'arn:aws:iam::999:role/MyRole')
-        monkeypatch.setenv('SEDFILE_S3_BUCKET', 'my-bucket')
-        monkeypatch.setenv('SEDFILE_S3_KEY', 'sedfiles/default.sed')
         monkeypatch.setenv('TRANSFORM_MODE', 'json')
         monkeypatch.setenv('LOG_LEVEL', 'DEBUG')
         monkeypatch.setenv('ENABLE_METRICS', 'false')
@@ -185,8 +160,6 @@ class TestLoadConfigFromEnv:
         assert config.dest_region == 'us-west-2'
         assert config.dest_secret_name == 'my-dest-secret'
         assert config.dest_account_role_arn == 'arn:aws:iam::999:role/MyRole'
-        assert config.sedfile_s3_bucket == 'my-bucket'
-        assert config.sedfile_s3_key == 'sedfiles/default.sed'
         assert config.transform_mode == 'json'
         assert config.log_level == 'DEBUG'
         assert config.enable_metrics is False
@@ -243,42 +216,6 @@ class TestLoadConfigFromEnv:
         config = load_config_from_env()
         assert config.timeout_seconds == 15
         assert config.max_secret_size == 10000
-
-
-class TestGetSedfileLocation:
-    """Tests for get_sedfile_location function"""
-
-    def test_sedfile_bundled(self):
-        """Test sedfile location when using bundled sedfile"""
-        config = ReplicatorConfig(dest_region='us-west-2')
-        location_type, location_value = get_sedfile_location(config)
-
-        assert location_type == 'bundled'
-        assert location_value is None
-
-    def test_sedfile_s3(self):
-        """Test sedfile location when using S3"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            sedfile_s3_bucket='my-bucket',
-            sedfile_s3_key='sedfiles/default.sed'
-        )
-        location_type, location_value = get_sedfile_location(config)
-
-        assert location_type == 's3'
-        assert location_value == 's3://my-bucket/sedfiles/default.sed'
-
-    def test_sedfile_s3_with_nested_path(self):
-        """Test sedfile location with nested S3 path"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            sedfile_s3_bucket='my-bucket',
-            sedfile_s3_key='path/to/sedfiles/custom.sed'
-        )
-        location_type, location_value = get_sedfile_location(config)
-
-        assert location_type == 's3'
-        assert location_value == 's3://my-bucket/path/to/sedfiles/custom.sed'
 
 
 class TestIsCrossAccount:

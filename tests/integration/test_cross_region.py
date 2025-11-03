@@ -99,7 +99,7 @@ class TestCrossRegionReplication:
             "database": "db-prod.us-west-2.rds.amazonaws.com"
         })
 
-        # TODO: Set up S3 sedfile or bundled sedfile
+        # TODO: Set up transformation secret with sed script
         # For now, test without transformation
 
         os.environ.update({

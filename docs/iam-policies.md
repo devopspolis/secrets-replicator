@@ -92,14 +92,14 @@ This policy should be attached to the Lambda function's execution role in the **
       }
     },
     {
-      "Sid": "LoadSedfileFromS3",
+      "Sid": "ReadTransformationSecrets",
       "Effect": "Allow",
       "Action": [
-        "s3:GetObject",
-        "s3:GetObjectVersion"
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
       ],
       "Resource": [
-        "arn:aws:s3:::${SEDFILE_BUCKET}/${SEDFILE_KEY}"
+        "arn:aws:secretsmanager:${SOURCE_REGION}:${ACCOUNT_ID}:secret:secrets-replicator/transformations/*"
       ]
     },
     {
@@ -144,8 +144,8 @@ This policy should be attached to the Lambda function's execution role in the **
 - `${ACCOUNT_ID}`: AWS account ID (source account)
 - `${DEST_ACCOUNT_ID}`: Destination AWS account ID (for cross-account)
 - `${DEST_ROLE_NAME}`: Name of the destination role (for cross-account)
-- `${SEDFILE_BUCKET}`: S3 bucket containing sedfile
-- `${SEDFILE_KEY}`: S3 key for sedfile
+
+**Note**: Transformation rules are stored in transformation secrets with the prefix `secrets-replicator/transformations/`, not in S3.
 
 ---
 

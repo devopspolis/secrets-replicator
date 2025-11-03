@@ -116,11 +116,11 @@ s/us-east-1/us-west-2/g
             account_id=account_id,
         )
 
-        # Invoke handler (will need to modify to support local sedfile path)
+        # Invoke handler (will need to set up transformation secret)
         # For now, this test documents the intended behavior
-        # Real implementation would need S3 sedfile or bundled sedfile support
+        # Real implementation requires transformation secret with sed script
 
-        # TODO: Complete this test once sedfile loading is integrated
+        # TODO: Complete this test once transformation secret is set up
         # result = lambda_handler(event, {})
         # assert result["statusCode"] == 200
 

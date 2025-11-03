@@ -4,7 +4,6 @@ Pytest configuration and fixtures for integration tests.
 Integration tests require:
 - AWS credentials configured (AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)
 - Permissions to create/delete secrets in Secrets Manager
-- Permissions to create/delete S3 objects (for sedfile tests)
 - Optional: Cross-account role for cross-account tests
 
 To run integration tests:
@@ -196,40 +195,6 @@ class SecretHelper:
         self.created_secrets.clear()
 
 
-class S3Helper:
-    """Helper class for managing test S3 objects (sedfiles)."""
-
-    def __init__(self, region: str = "us-east-1"):
-        self.region = region
-        self.client = boto3.client("s3", region_name=region)
-        self.created_objects: List[tuple] = []
-
-    def upload_sedfile(
-        self,
-        bucket: str,
-        key: str,
-        content: str
-    ):
-        """Upload sedfile to S3."""
-        self.client.put_object(
-            Bucket=bucket,
-            Key=key,
-            Body=content.encode("utf-8"),
-            ContentType="text/plain"
-        )
-        self.created_objects.append((bucket, key))
-
-    def cleanup(self):
-        """Delete all created objects."""
-        for bucket, key in list(self.created_objects):
-            try:
-                self.client.delete_object(Bucket=bucket, Key=key)
-            except ClientError:
-                # Ignore errors during cleanup
-                pass
-        self.created_objects.clear()
-
-
 @pytest.fixture
 def aws_region(request):
     """AWS region for tests."""
@@ -261,14 +226,6 @@ def secret_helper(aws_region):
 def dest_secret_helper(dest_region):
     """Fixture for managing test secrets in destination region."""
     helper = SecretHelper(region=dest_region)
-    yield helper
-    helper.cleanup()
-
-
-@pytest.fixture
-def s3_helper(aws_region):
-    """Fixture for managing test S3 objects."""
-    helper = S3Helper(region=aws_region)
     yield helper
     helper.cleanup()
 

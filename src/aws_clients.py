@@ -298,6 +298,34 @@ class SecretsManagerClient:
             # Re-raise other errors
             self._handle_client_error(e, f'secret_exists({secret_id})')
 
+    def get_secret_tags(self, secret_id: str) -> Dict[str, str]:
+        """
+        Get tags for a secret.
+
+        Args:
+            secret_id: Secret name or ARN
+
+        Returns:
+            Dictionary of tag key-value pairs
+
+        Raises:
+            SecretNotFoundError: If secret doesn't exist
+            AccessDeniedError: If access is denied
+            AWSClientError: For other AWS errors
+
+        Examples:
+            >>> client = SecretsManagerClient('us-east-1')
+            >>> tags = client.get_secret_tags('my-secret')
+            >>> tags
+            {'Environment': 'production', 'Team': 'backend'}
+        """
+        try:
+            response = self._client.describe_secret(SecretId=secret_id)
+            tags_list = response.get('Tags', [])
+            return {tag['Key']: tag['Value'] for tag in tags_list}
+        except ClientError as e:
+            self._handle_client_error(e, f'get_secret_tags({secret_id})')
+
     def _handle_client_error(self, error: ClientError, operation: str) -> None:
         """
         Handle boto3 ClientError and raise appropriate custom exception.

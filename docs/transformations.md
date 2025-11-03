@@ -144,10 +144,17 @@ s/arn:aws:secretsmanager:us-east-1:/arn:aws:secretsmanager:us-west-2:/g
 s/us-east-1/us-west-2/g
 ```
 
-**Usage**:
+**Setup**:
 ```bash
-SED_SCRIPT_S3_BUCKET=my-config-bucket
-SED_SCRIPT_S3_KEY=region-swap.sed
+# Create transformation secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string "$(cat region-swap.sed)"
+
+# Tag source secret to use this transformation
+aws secretsmanager tag-resource \
+  --secret-id app-db-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 ```
 
 ---
@@ -649,25 +656,29 @@ aws secretsmanager get-secret-value \
   --output text | sed 's/dev/prod/g'
 ```
 
-### 2. Use S3 for Complex Transformations
+### 2. Use Transformation Secrets for Complex Transformations
 
-For sedfiles with >5 rules, store in S3:
+For sedfiles with >5 rules, store in transformation secrets:
 
 ```bash
-# Upload sedfile to S3
-aws s3 cp transform.sed s3://my-config-bucket/sedfiles/dev-to-prod.sed
+# Create transformation secret with multi-line sed script
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/dev-to-prod \
+  --secret-string "$(cat transform.sed)"
 
-# Enable versioning
-aws s3api put-bucket-versioning \
-  --bucket my-config-bucket \
-  --versioning-configuration Status=Enabled
+# Enable automatic rotation for transformation secrets (optional)
+aws secretsmanager rotate-secret \
+  --secret-id secrets-replicator/transformations/dev-to-prod \
+  --rotation-lambda-arn arn:aws:lambda:region:account:function:rotator
 ```
 
 **Benefits**:
-- Version control
-- Easy rollback
-- Collaborative editing
-- No Lambda environment variable limits
+- Automatic versioning (AWSCURRENT, AWSPREVIOUS)
+- Easy rollback to previous versions
+- Encryption at rest with KMS
+- IAM-based access control
+- No external dependencies
+- CloudTrail audit logging
 
 ### 3. Be Specific with Patterns
 
@@ -967,19 +978,32 @@ Not directly supported, but achievable with custom Lambda layer.
 
 ### Technique 5: Dynamic Transformations
 
-Use Lambda environment variables in transformations:
+Use multiple transformation secrets for different scenarios:
 
-**Not supported directly**, but you can parameterize sedfiles:
+**Pattern**: Create environment-specific transformation secrets
 
 ```bash
-# In sedfile S3 object metadata, store:
-# x-amz-meta-source-env=dev
-# x-amz-meta-dest-env=prod
+# Create dev-to-staging transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/dev-to-staging \
+  --secret-string 's/dev/staging/g'
 
-# Lambda reads metadata and generates sed script dynamically
+# Create staging-to-prod transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/staging-to-prod \
+  --secret-string 's/staging/prod/g'
+
+# Tag secrets based on promotion path
+aws secretsmanager tag-resource \
+  --secret-id my-dev-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=dev-to-staging
+
+aws secretsmanager tag-resource \
+  --secret-id my-staging-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=staging-to-prod
 ```
 
-This requires custom Lambda code modification.
+This allows different replication flows with appropriate transformations.
 
 ---
 

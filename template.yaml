@@ -53,22 +53,15 @@ Parameters:
 
   DestinationSecretName:
     Type: String
-    Description: Name for destination secret (leave empty to use source name)
+    Description: |
+      Override destination secret name (leave empty to use source name - RECOMMENDED).
+      Standard DR/HA pattern uses identical names across regions.
+      Only specify for migration scenarios or testing.
     Default: ''
 
   DestinationAccountRoleArn:
     Type: String
     Description: IAM role ARN in destination account for cross-account replication (leave empty for same-account)
-    Default: ''
-
-  SedfileS3Bucket:
-    Type: String
-    Description: S3 bucket containing sedfile (leave empty to use bundled sedfile)
-    Default: ''
-
-  SedfileS3Key:
-    Type: String
-    Description: S3 key for sedfile (required if SedfileS3Bucket is provided)
     Default: ''
 
   TransformMode:
@@ -97,6 +90,11 @@ Parameters:
       - 'true'
       - 'false'
 
+  TransformationSecretPrefix:
+    Type: String
+    Description: Prefix for transformation secrets (these will be excluded from replication)
+    Default: 'secrets-replicator/transformations/'
+
 Resources:
   # Lambda Function
   SecretReplicatorFunction:
@@ -112,11 +110,10 @@ Resources:
           DEST_REGION: !Ref DestinationRegion
           DEST_SECRET_NAME: !Ref DestinationSecretName
           DEST_ACCOUNT_ROLE_ARN: !Ref DestinationAccountRoleArn
-          SEDFILE_S3_BUCKET: !Ref SedfileS3Bucket
-          SEDFILE_S3_KEY: !Ref SedfileS3Key
           TRANSFORM_MODE: !Ref TransformMode
           LOG_LEVEL: !Ref LogLevel
           ENABLE_METRICS: !Ref EnableMetrics
+          TRANSFORMATION_SECRET_PREFIX: !Ref TransformationSecretPrefix
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
@@ -130,6 +127,24 @@ Resources:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
               Resource: !Ref SourceSecretPattern
+
+            # Read transformation secrets (for loading transformation rules)
+            - Sid: ReadTransformationSecrets
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:DescribeSecret
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${TransformationSecretPrefix}*'
+
+            # DENY write to transformation secrets (defense-in-depth security layer)
+            - Sid: DenyWriteTransformationSecrets
+              Effect: Deny
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:DeleteSecret
+              Resource: !Sub 'arn:aws:secretsmanager:*:*:secret:${TransformationSecretPrefix}*'
 
             # Write destination secrets (same account)
             - Sid: WriteDestinationSecrets
@@ -165,14 +180,6 @@ Resources:
                   'kms:ViaService':
                     - !Sub 'secretsmanager.${DestinationRegion}.amazonaws.com'
                     - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
-
-            # Read sedfile from S3 (if configured)
-            - Sid: ReadSedfile
-              Effect: Allow
-              Action:
-                - s3:GetObject
-                - s3:GetObjectVersion
-              Resource: !Sub 'arn:aws:s3:::${SedfileS3Bucket}/*'
 
             # Assume role for cross-account (if configured)
             - Sid: AssumeDestinationRole

@@ -95,7 +95,7 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 
 - ✅ **Fast Execution**: 200-500ms warm execution, 2-3s cold start
 - ✅ **Efficient Transformations**: 10-30ms transformation time
-- ✅ **Sedfile Caching**: S3 sedfiles cached in warm containers
+- ✅ **Transformation Secrets**: Cached in Lambda memory for fast access
 - ✅ **Parallel Processing**: Handles concurrent secret updates
 
 ### Cost
@@ -125,18 +125,19 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 │                   └──────────┬──────────┘                              │
 │                              │                                          │
 │                              ▼                                          │
-│         ┌───────────────────────────────────────┐                      │
-│         │   Lambda Function                     │                      │
-│         │   (Secrets Replicator)                │                      │
-│         ├───────────────────────────────────────┤                      │
-│         │ 1. Parse EventBridge event            │                      │
-│         │ 2. Get source secret value            │◄──────S3 Sedfile     │
-│         │ 3. Load transformation rules (S3/ENV) │                      │
-│         │ 4. Apply transformations               │                      │
-│         │ 5. Assume destination role (if needed)│                      │
-│         │ 6. Put transformed secret              │                      │
-│         │ 7. Publish metrics & logs              │                      │
-│         └────────┬────────────────────┬─────────┘                      │
+│         ┌──────────────────────────────────────────────────┐           │
+│         │   Lambda Function                                │           │
+│         │   (Secrets Replicator)                           │           │
+│         ├──────────────────────────────────────────────────┤           │
+│         │ 1. Parse EventBridge event                       │           │
+│         │ 2. Get source secret tags & transformation name  │           │
+│         │ 3. Load transformation rules (from secret)       │           │
+│         │ 4. Get source secret value                       │           │
+│         │ 5. Apply transformations                         │           │
+│         │ 6. Assume destination role (if needed)           │           │
+│         │ 7. Put transformed secret                        │           │
+│         │ 8. Publish metrics & logs                        │           │
+│         └────────┬────────────────────┬────────────────────┘           │
 │                  │                    │                                 │
 │                  ▼                    ▼                                 │
 │        ┌──────────────┐    ┌──────────────────┐                        │
@@ -291,21 +292,18 @@ Configure via SAM template parameters or directly in Lambda:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `SOURCE_SECRET_ARN` | ✅ Yes | - | ARN of source secret to replicate |
-| `DEST_SECRET_NAME` | ✅ Yes | - | Name of destination secret |
 | `DEST_REGION` | ✅ Yes | - | Destination AWS region |
+| `DEST_SECRET_NAME` | No | *(same as source)* | Override destination secret name (leave empty to use source name) |
 | `TRANSFORM_MODE` | ✅ Yes | - | Transformation mode: `sed` or `json` |
-| `SED_SCRIPT` | Conditional | - | Sed script (required if `TRANSFORM_MODE=sed`) |
-| `SED_SCRIPT_S3_BUCKET` | No | - | S3 bucket for sedfile (alternative to `SED_SCRIPT`) |
-| `SED_SCRIPT_S3_KEY` | No | - | S3 key for sedfile |
-| `JSON_MAPPING` | Conditional | - | JSON mapping (required if `TRANSFORM_MODE=json`) |
-| `JSON_MAPPING_S3_BUCKET` | No | - | S3 bucket for JSON mapping file |
-| `JSON_MAPPING_S3_KEY` | No | - | S3 key for JSON mapping file |
+| `TRANSFORMATION_SECRET_PREFIX` | No | `secrets-replicator/transformations/` | Prefix for transformation secrets (excluded from replication) |
 | `DEST_ACCOUNT_ROLE_ARN` | No | - | IAM role ARN in destination account (cross-account) |
-| `DEST_ROLE_EXTERNAL_ID` | No | - | External ID for AssumeRole (cross-account security) |
 | `KMS_KEY_ID` | No | - | KMS key ID for destination secret encryption |
 | `MAX_SECRET_SIZE` | No | `65536` | Maximum secret size in bytes (64KB default) |
 | `ENABLE_METRICS` | No | `true` | Enable CloudWatch custom metrics |
+| `LOG_LEVEL` | No | `INFO` | Log level: DEBUG, INFO, WARN, ERROR |
+| `TIMEOUT_SECONDS` | No | `5` | Regex timeout in seconds |
+
+**Transformation Secrets**: Source secrets must be tagged with `SecretsReplicator:TransformSecretName` to specify which transformation secret contains the sed or JSON transformation rules.
 
 ### SAM Template Parameters
 
@@ -315,14 +313,13 @@ Configure when deploying with SAM:
 # samconfig.toml
 [default.deploy.parameters]
 parameter_overrides = [
-  "SourceSecretArn=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret",
-  "DestSecretName=my-destination-secret",
-  "DestRegion=us-west-2",
+  "DestinationRegion=us-west-2",
   "TransformMode=sed",
-  "SedScript=s/us-east-1/us-west-2/g",
   "EnableMetrics=true"
 ]
 ```
+
+**Note**: Transformation rules are stored in transformation secrets (see [Transformations](#transformations) section below), not in SAM parameters.
 
 ---
 
@@ -344,12 +341,26 @@ parameter_overrides = [
 ```
 
 **Configuration**:
+
+1. Create transformation secret:
 ```bash
-SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:prod-db-credentials
-DEST_SECRET_NAME=prod-db-credentials
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap-sed \
+  --description "Sed transformation for region swapping" \
+  --secret-string 's/us-east-1/us-west-2/g'
+```
+
+2. Tag source secret with transformation name:
+```bash
+aws secretsmanager tag-resource \
+  --secret-id prod-db-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap-sed
+```
+
+3. Lambda environment variables:
+```bash
 DEST_REGION=us-west-2
 TRANSFORM_MODE=sed
-SED_SCRIPT=s/us-east-1/us-west-2/g
 ```
 
 **Destination Secret** (`us-west-2`):
@@ -474,26 +485,34 @@ JSON_MAPPING='{"$.api_endpoint": "https://api.prod.example.com", "$.database": "
 }
 ```
 
-**Sedfile** (S3: `s3://my-config-bucket/region-swap.sed`):
-```sed
-# Swap regions
+**Configuration**:
+
+1. Create transformation secret with comprehensive region swapping rules:
+```bash
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap-comprehensive \
+  --description "Comprehensive region swap transformations" \
+  --secret-string '# Swap regions
 s/us-east-1/us-west-2/g
 
 # Update API key
 s/ak_east_/ak_west_/g
 
 # ARN transformations
-s/arn:aws:s3:::app-data-us-east-1/arn:aws:s3:::app-data-us-west-2/g
+s/arn:aws:s3:::app-data-us-east-1/arn:aws:s3:::app-data-us-west-2/g'
 ```
 
-**Configuration**:
+2. Tag source secret:
 ```bash
-SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:app-config
-DEST_SECRET_NAME=app-config
+aws secretsmanager tag-resource \
+  --secret-id app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap-comprehensive
+```
+
+3. Lambda environment variables:
+```bash
 DEST_REGION=us-west-2
 TRANSFORM_MODE=sed
-SED_SCRIPT_S3_BUCKET=my-config-bucket
-SED_SCRIPT_S3_KEY=region-swap.sed
 ```
 
 **Result**: Complete multi-region deployment with region-specific endpoints.
@@ -501,6 +520,22 @@ SED_SCRIPT_S3_KEY=region-swap.sed
 ---
 
 ## Transformations
+
+### Transformation Secrets
+
+Transformation rules (sed scripts or JSON mappings) are stored in **transformation secrets** in AWS Secrets Manager with the prefix `secrets-replicator/transformations/`.
+
+**Benefits**:
+- ✅ Version control via Secrets Manager versioning
+- ✅ Secure storage with encryption
+- ✅ No deployment required to update transformations
+- ✅ Audit trail via CloudTrail
+- ✅ Namespace isolation (transformation secrets excluded from replication)
+
+**Setup Process**:
+1. Create transformation secret with prefix `secrets-replicator/transformations/`
+2. Store sed script or JSON mapping in secret value
+3. Tag source secrets with `SecretsReplicator:TransformSecretName` pointing to transformation secret name (without prefix)
 
 ### Sed Transformations
 
@@ -526,22 +561,36 @@ s/old/new/gi
 
 **Environment Change**:
 ```bash
-SED_SCRIPT='s/dev/prod/g'
+# Create transformation secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/env-to-prod \
+  --secret-string 's/dev/prod/g'
+
+# Tag source secret
+aws secretsmanager tag-resource \
+  --secret-id my-app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=env-to-prod
 ```
 
 **Region Swap**:
 ```bash
-SED_SCRIPT='s/us-east-1/us-west-2/g'
+# Create transformation secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string 's/us-east-1/us-west-2/g'
+
+# Tag source secret
+aws secretsmanager tag-resource \
+  --secret-id db-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 ```
 
-**Protocol Upgrade**:
+**Complex Multi-Line Transformations**:
 ```bash
-SED_SCRIPT='s/http:/https:/g'
-```
-
-**Complex Multi-Line** (use S3 sedfile):
-```sed
-# Change environment
+# Create transformation secret with multi-line sed script
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/comprehensive-transform \
+  --secret-string '# Change environment
 s/dev/prod/g
 s/staging/prod/g
 
@@ -553,7 +602,12 @@ s/dev-api\.example\.com/prod-api.example.com/g
 s/:3000/:8080/g
 
 # Case-insensitive domain swap
-s/example\.local/example.com/gi
+s/example\.local/example.com/gi'
+
+# Tag source secret
+aws secretsmanager tag-resource \
+  --secret-id app-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=comprehensive-transform
 ```
 
 ### JSON Transformations
@@ -604,9 +658,17 @@ Use JSONPath expressions to map specific fields.
    echo '{"host":"db.us-east-1.amazonaws.com"}' | sed 's/us-east-1/us-west-2/g'
    ```
 
-2. **Use S3 for complex transformations**: Easier to manage and version control
+2. **Use descriptive transformation secret names**: Makes maintenance easier
+   - Good: `secrets-replicator/transformations/db-region-swap-east-to-west`
+   - Bad: `secrets-replicator/transformations/transform1`
 
-3. **Version your sedfiles**: Use S3 versioning for rollback capability
+3. **Version your transformations**: Use Secrets Manager versioning for rollback capability
+   ```bash
+   # Update transformation secret (creates new version)
+   aws secretsmanager update-secret \
+     --secret-id secrets-replicator/transformations/region-swap \
+     --secret-string 's/us-east-1/eu-west-1/g'
+   ```
 
 4. **Avoid overly broad patterns**: Be specific to prevent unintended replacements
 
@@ -812,10 +874,11 @@ With exponential backoff (transient errors):
 ### Performance Optimization Tips
 
 1. **Use warm containers**: Keep Lambda warm with CloudWatch Events (ping every 5 min)
-2. **Cache sedfiles**: Store sedfiles in S3 and leverage Lambda caching
+2. **Reuse transformation secrets**: Transformation secrets are cached in Lambda memory across invocations
 3. **Minimize secret size**: Smaller secrets replicate faster
 4. **Use provisioned concurrency**: For high-frequency replications
 5. **Batch updates**: Update multiple fields in a single secret update
+6. **Share transformation secrets**: Multiple source secrets can reference the same transformation secret
 
 ---
 
@@ -853,13 +916,24 @@ ERROR: AccessDenied - User is not authorized to perform secretsmanager:GetSecret
 **Causes**:
 - Incorrect sed pattern
 - Wrong `TRANSFORM_MODE`
-- Sedfile not found in S3
+- Source secret missing `SecretsReplicator:TransformSecretName` tag
+- Transformation secret not found
+- Transformation secret name incorrect (includes prefix when it shouldn't)
 
 **Solutions**:
 1. Test sed pattern locally: `echo "value" | sed 's/old/new/g'`
 2. Check CloudWatch logs for transformation details
-3. Verify `SED_SCRIPT_S3_BUCKET` and `SED_SCRIPT_S3_KEY` are correct
-4. Ensure Lambda has `s3:GetObject` permission
+3. Verify source secret has correct tag:
+   ```bash
+   aws secretsmanager describe-secret --secret-id my-secret --query 'Tags'
+   ```
+4. Verify transformation secret exists:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id secrets-replicator/transformations/my-transform
+   ```
+5. Ensure tag value is just the name (NOT the full path):
+   - ✅ Good: `Value=region-swap`
+   - ❌ Bad: `Value=secrets-replicator/transformations/region-swap`
 
 ---
 

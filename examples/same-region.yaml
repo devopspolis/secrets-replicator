@@ -9,14 +9,24 @@ Parameters:
   DestinationRegion: 'us-east-1'
   DestinationSecretName: 'destination-secret'
   DestinationAccountRoleArn: ''
-  SedfileS3Bucket: ''
-  SedfileS3Key: ''
   TransformMode: 'sed'
   LogLevel: 'INFO'
   EnableMetrics: 'true'
+  TransformationSecretPrefix: 'secrets-replicator/transformations/'
 
+# Setup Instructions:
+# 1. Create transformation secret:
+#    aws secretsmanager create-secret \
+#      --name secrets-replicator/transformations/basic-transform \
+#      --secret-string 's/dev/prod/g'
+#
+# 2. Tag source secret with transformation name:
+#    aws secretsmanager tag-resource \
+#      --secret-id source-secret \
+#      --tags Key=SecretsReplicator:TransformSecretName,Value=basic-transform
+#
 # Notes:
 # - Both source and destination are in us-east-1
-# - Uses bundled sedfile (no S3 configuration)
+# - Transformation rules stored in secrets-replicator/transformations/basic-transform
 # - Destination secret will have a different name than source
 # - Same AWS account (no cross-account role needed)

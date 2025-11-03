@@ -237,7 +237,7 @@ aws lambda get-function-configuration \
 # Step 2: Check transformation configuration
 aws lambda get-function-configuration \
   --function-name secrets-replicator-prod-replicator \
-  --query 'Environment.Variables.{SED_SCRIPT:SED_SCRIPT,JSON_MAPPING:JSON_MAPPING,SED_S3_BUCKET:SED_SCRIPT_S3_BUCKET,SED_S3_KEY:SED_SCRIPT_S3_KEY}'
+  --query 'Environment.Variables.{TRANSFORM_MODE:TRANSFORM_MODE,TRANSFORMATION_SECRET_PREFIX:TRANSFORMATION_SECRET_PREFIX}'
 
 # Step 3: Check CloudWatch logs for transformation
 aws logs filter-log-events \
@@ -262,19 +262,30 @@ SOURCE_VALUE=$(aws secretsmanager get-secret-value \
 echo "$SOURCE_VALUE" | sed 's/us-east-1/us-west-2/g'
 ```
 
-**Solution B**: Check S3 Sedfile Access
+**Solution B**: Check Transformation Secret Access
 
-If using S3 sedfile:
+If using transformation secrets:
 
 ```bash
-# Verify sedfile exists
-aws s3 ls s3://my-bucket/sedfiles/transform.sed
+# Check source secret has transformation tag
+aws secretsmanager describe-secret \
+  --secret-id source-secret \
+  --query Tags
 
-# Download and inspect
-aws s3 cp s3://my-bucket/sedfiles/transform.sed - | cat
+# Look for: Key=SecretsReplicator:TransformSecretName,Value=...
 
-# Check Lambda has S3 read permission
-# Lambda role needs: s3:GetObject, s3:GetObjectVersion
+# Verify transformation secret exists
+TRANSFORM_NAME=$(aws secretsmanager describe-secret \
+  --secret-id source-secret \
+  --query 'Tags[?Key==`SecretsReplicator:TransformSecretName`].Value' \
+  --output text)
+
+aws secretsmanager get-secret-value \
+  --secret-id "secrets-replicator/transformations/${TRANSFORM_NAME}" \
+  --query SecretString --output text
+
+# Check Lambda has permission to read transformation secrets
+# Lambda role needs: secretsmanager:GetSecretValue on secrets-replicator/transformations/*
 ```
 
 **Solution C**: Validate JSON Mapping

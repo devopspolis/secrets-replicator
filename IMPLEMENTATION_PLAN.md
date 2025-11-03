@@ -47,7 +47,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     black>=23.0.0
     pylint>=3.0.0
     mypy>=1.7.0
-    boto3-stubs[secretsmanager,s3,sts]>=1.34.0
+    boto3-stubs[secretsmanager,sts]>=1.34.0
     ```
   - [ ] Setup `.gitignore` for Python projects
   - [ ] Initialize Git repository (already done)
@@ -149,8 +149,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
         dest_region: str
         dest_secret_name: Optional[str]
         dest_account_role_arn: Optional[str]
-        sedfile_s3_bucket: Optional[str]
-        sedfile_s3_key: Optional[str]
+        transformation_secret_prefix: str = "secrets-replicator/transformations/"
         transform_mode: str = "sed"
         log_level: str = "INFO"
         enable_metrics: bool = True
@@ -172,14 +171,13 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     - Contextual information (request ID, ARNs, etc.)
   - [ ] Add unit tests for handler logic (with mocked AWS calls)
 
-- [ ] **2.4 Sedfile Loading**
-  - [ ] Implement sedfile loader for S3
-    - Create S3 client
-    - Download sedfile from S3
+- [ ] **2.4 Transformation Secret Loading**
+  - [ ] Implement transformation secret loader
+    - Retrieve transformation secret name from source secret tags
+    - Load transformation secret from Secrets Manager (with prefix)
     - Cache in memory for Lambda execution context
-  - [ ] Implement sedfile loader for bundled files
-    - Load from local filesystem
-  - [ ] Add unit tests with mocked S3 (using `moto`)
+    - Exclude transformation secrets from replication
+  - [ ] Add unit tests with mocked Secrets Manager (using `moto`)
 
 #### Deliverables
 - Lambda handler that processes EventBridge events
@@ -203,8 +201,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     - `get_secret()` - Retrieve secret value
     - `put_secret()` - Create or update secret
     - `secret_exists()` - Check if secret exists
-  - [ ] Implement `S3Client` class (for sedfile)
-    - `get_object()` - Download sedfile from S3
+    - `get_secret_tags()` - Retrieve secret tags for transformation routing
   - [ ] Add error handling for AWS exceptions
     - `ResourceNotFoundException`
     - `AccessDeniedException`
@@ -345,14 +342,10 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
         Type: String
         Description: IAM role ARN in destination account (for cross-account)
         Default: ""
-      SedfileS3Bucket:
+      TransformationSecretPrefix:
         Type: String
-        Description: S3 bucket containing sedfile (optional)
-        Default: ""
-      SedfileS3Key:
-        Type: String
-        Description: S3 key for sedfile (optional)
-        Default: ""
+        Description: Prefix for transformation secrets in Secrets Manager
+        Default: "secrets-replicator/transformations/"
       TransformMode:
         Type: String
         Description: Transformation mode (sed or json)
@@ -376,11 +369,10 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     - Timeout: 60 seconds
     - Environment variables from parameters
   - [ ] Define IAM execution role
-    - Secrets Manager read permissions
-    - S3 read permissions (for sedfile)
+    - Secrets Manager read permissions (source secrets and transformation secrets)
     - STS AssumeRole permissions
     - CloudWatch Logs permissions
-    - CloudWatch Metrics permissions
+    - CloudWatch PutMetricData permissions
   - [ ] Define EventBridge rule
     - Event pattern for Secrets Manager updates
     - Target: Lambda function
@@ -413,7 +405,8 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     - Output stack outputs
   - [ ] Create cleanup script `scripts/cleanup.sh`
     - Delete CloudFormation stack
-    - Clean up S3 artifacts
+    - Optionally clean up transformation secrets
+    - Purge SQS DLQ
   - [ ] Make scripts executable and test
 
 #### Deliverables
@@ -717,7 +710,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
 5. Begin Phase 1.2 (Transformation Engine - Sed Mode)
 
 **Decision points**:
-- [ ] Choose sedfile storage method (S3 vs bundled)
+- [x] ~~Choose sedfile storage method (S3 vs bundled)~~ **Decision: Use transformation secrets in Secrets Manager**
 - [ ] Decide on additional features for v1.0
 - [ ] Set up AWS test accounts (need 2 for cross-account testing)
 - [ ] Choose monitoring/alerting strategy beyond CloudWatch

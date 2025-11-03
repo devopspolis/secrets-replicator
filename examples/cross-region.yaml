@@ -7,17 +7,27 @@
 Parameters:
   SourceSecretPattern: 'arn:aws:secretsmanager:us-east-1:123456789012:secret:app-*'
   DestinationRegion: 'us-west-2'
-  DestinationSecretName: ''  # Use same name as source
+  DestinationSecretName: ''  # Use same name as source (recommended for DR)
   DestinationAccountRoleArn: ''
-  SedfileS3Bucket: 'my-sedfile-bucket'
-  SedfileS3Key: 'sedfiles/region-swap.sed'
   TransformMode: 'sed'
   LogLevel: 'INFO'
   EnableMetrics: 'true'
+  TransformationSecretPrefix: 'secrets-replicator/transformations/'
 
+# Setup Instructions:
+# 1. Create transformation secret with region swap rules:
+#    aws secretsmanager create-secret \
+#      --name secrets-replicator/transformations/region-swap-east-to-west \
+#      --secret-string 's/us-east-1/us-west-2/g'
+#
+# 2. Tag source secrets with transformation name:
+#    aws secretsmanager tag-resource \
+#      --secret-id app-db-credentials \
+#      --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap-east-to-west
+#
 # Notes:
 # - Source secrets in us-east-1, destination in us-west-2
-# - Uses sedfile from S3 to transform region-specific values
+# - Transformation rules stored in transformation secret
 # - Same AWS account (no cross-account role needed)
-# - Destination secret inherits source name
+# - Destination secret inherits source name (recommended for DR)
 # - Common pattern for DR/multi-region deployments

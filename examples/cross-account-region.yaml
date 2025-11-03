@@ -9,21 +9,39 @@ Parameters:
   DestinationRegion: 'us-west-2'
   DestinationSecretName: ''  # Use same name as source
   DestinationAccountRoleArn: 'arn:aws:iam::222222222222:role/SecretReplicatorDestRole'
-  SedfileS3Bucket: 'prod-config-bucket'
-  SedfileS3Key: 'sedfiles/prod-to-dr.sed'
   TransformMode: 'sed'
   LogLevel: 'INFO'
   EnableMetrics: 'true'
+  TransformationSecretPrefix: 'secrets-replicator/transformations/'
 
+# Setup Instructions:
+# 1. Create comprehensive transformation secret:
+#    aws secretsmanager create-secret \
+#      --name secrets-replicator/transformations/prod-to-dr-comprehensive \
+#      --secret-string '# Region swap
+#s/us-east-1/us-west-2/g
+#
+## Account ID swap
+#s/111111111111/222222222222/g
+#
+## ARN transformations
+#s/arn:aws:rds:us-east-1:111111111111/arn:aws:rds:us-west-2:222222222222/g
+#s/arn:aws:s3:::prod-/arn:aws:s3:::dr-/g'
+#
+# 2. Tag source secrets:
+#    aws secretsmanager tag-resource \
+#      --secret-id prod-db-credentials \
+#      --tags Key=SecretsReplicator:TransformSecretName,Value=prod-to-dr-comprehensive
+#
 # Notes:
 # - Source: Account 111111111111, us-east-1 (production)
 # - Destination: Account 222222222222, us-west-2 (DR)
-# - Uses sedfile from S3 to transform region/environment-specific values
+# - Transformation rules stored in transformation secret
 # - Requires cross-account IAM role in destination account
 # - Most complex scenario - tests all features
 #
 # Required setup:
-# 1. S3 bucket 'prod-config-bucket' in source account with sedfile
+# 1. Transformation secret in source account
 # 2. IAM role 'SecretReplicatorDestRole' in destination account
 # 3. Trust policy on destination role allowing source Lambda
 # 4. External ID for enhanced security (recommended)

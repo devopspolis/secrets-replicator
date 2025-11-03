@@ -28,11 +28,11 @@ The Secrets Replicator is an event-driven AWS Lambda function that replicates AW
 │                                     │                            │
 │                    ┌────────────────┼────────────────┐          │
 │                    │                │                │          │
-│         ┌──────────▼────┐   ┌──────▼──────┐  ┌─────▼─────┐    │
-│         │   Secrets     │   │     S3      │  │    STS    │    │
-│         │   Manager     │   │  (Sedfile)  │  │ AssumeRole│    │
-│         │   (Source)    │   │             │  │           │    │
-│         └───────────────┘   └─────────────┘  └─────┬─────┘    │
+│         ┌──────────▼────┐   ┌──────▼──────────┐  ┌─▼─────┐    │
+│         │   Secrets     │   │    Secrets      │  │  STS  │    │
+│         │   Manager     │   │    Manager      │  │Assume │    │
+│         │   (Source)    │   │(Transformations)│  │ Role  │    │
+│         └───────────────┘   └─────────────────┘  └───┬───┘    │
 │                                                     │          │
 └─────────────────────────────────────────────────────┼──────────┘
                                                       │
@@ -95,15 +95,14 @@ The Secrets Replicator is an event-driven AWS Lambda function that replicates AW
 
 **Environment Variables**:
 ```
-DEST_REGION                # Required: Destination region (or comma-separated list)
-DEST_SECRET_NAME           # Optional: Override destination secret name
-DEST_ACCOUNT_ROLE_ARN      # Optional: Role ARN to assume for cross-account
-SEDFILE_S3_BUCKET          # Optional: S3 bucket containing sedfile
-SEDFILE_S3_KEY             # Optional: S3 key for sedfile
-TRANSFORM_MODE             # Optional: "sed" or "json" (default: "sed")
-LOG_LEVEL                  # Optional: DEBUG, INFO, WARN, ERROR (default: INFO)
-DLQ_ARN                    # Optional: DLQ for failed events
-ENABLE_METRICS             # Optional: Enable CloudWatch custom metrics (default: true)
+DEST_REGION                    # Required: Destination region (or comma-separated list)
+DEST_SECRET_NAME               # Optional: Override destination secret name
+DEST_ACCOUNT_ROLE_ARN          # Optional: Role ARN to assume for cross-account
+TRANSFORMATION_SECRET_PREFIX   # Optional: Prefix for transformation secrets (default: "secrets-replicator/transformations/")
+TRANSFORM_MODE                 # Optional: "sed" or "json" (default: "sed")
+LOG_LEVEL                      # Optional: DEBUG, INFO, WARN, ERROR (default: INFO)
+DLQ_ARN                        # Optional: DLQ for failed events
+ENABLE_METRICS                 # Optional: Enable CloudWatch custom metrics (default: true)
 ```
 
 #### Handler Flow
@@ -314,64 +313,49 @@ class SecretsManagerClient:
                 )
 ```
 
-### 5. Sedfile Storage
+### 5. Transformation Secrets Storage
 
-#### Option A: S3 Bucket (Recommended)
+**Location**: AWS Secrets Manager with prefix `secrets-replicator/transformations/`
 
 **Advantages**:
-- Update rules without redeploying Lambda
-- Version control via S3 versioning
-- Encryption at rest with KMS
-- Access logging
+- Update transformation rules without redeploying Lambda
+- Automatic version control (AWSCURRENT, AWSPREVIOUS)
+- Encryption at rest with KMS by default
+- IAM-based access control
+- CloudTrail audit logging
+- No external dependencies (no S3 required)
+- Easy rollback to previous versions
 
 **Setup**:
-```yaml
-SedfileBucket:
-  Type: AWS::S3::Bucket
-  Properties:
-    BucketName: !Sub ${AWS::StackName}-sedfiles
-    BucketEncryption:
-      ServerSideEncryptionConfiguration:
-        - ServerSideEncryptionByDefault:
-            SSEAlgorithm: aws:kms
-            KMSMasterKeyID: !Ref SedfileKMSKey
-    VersioningConfiguration:
-      Status: Enabled
-    PublicAccessBlockConfiguration:
-      BlockPublicAcls: true
-      BlockPublicPolicy: true
-      IgnorePublicAcls: true
-      RestrictPublicBuckets: true
+```bash
+# Create transformation secret with sed script
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string 's/us-east-1/us-west-2/g'
+
+# Tag source secret to use this transformation
+aws secretsmanager tag-resource \
+  --secret-id my-source-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 ```
 
 **Lambda IAM Permission**:
 ```json
 {
   "Effect": "Allow",
-  "Action": ["s3:GetObject"],
-  "Resource": "arn:aws:s3:::bucket-name/sedfiles/*"
+  "Action": [
+    "secretsmanager:GetSecretValue",
+    "secretsmanager:DescribeSecret"
+  ],
+  "Resource": "arn:aws:secretsmanager:*:*:secret:secrets-replicator/transformations/*"
 }
 ```
 
-#### Option B: Bundled in Lambda Package
-
-**Advantages**:
-- Simple deployment
-- No external dependencies
-- Versioned with code
-
-**Disadvantages**:
-- Requires redeployment to change rules
-- Cannot be updated dynamically
-
-**Structure**:
-```
-src/
-├── handler.py
-├── sedfiles/
-│   ├── default.sed
-│   └── us-east-to-west.sed
-```
+**Key Features**:
+- **Tag-based routing**: Source secrets specify which transformation to use via tags
+- **Automatic exclusion**: Transformation secrets are never replicated (both source and destination filtering)
+- **Version rollback**: Use `AWSPREVIOUS` version stage to rollback transformations
+- **Multi-environment**: Different transformation secrets for dev→staging, staging→prod, etc.
 
 ## IAM Permissions
 
@@ -404,11 +388,14 @@ src/
       ]
     },
     {
-      "Sid": "ReadSedfile",
+      "Sid": "ReadTransformationSecrets",
       "Effect": "Allow",
-      "Action": ["s3:GetObject"],
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
       "Resource": [
-        "arn:aws:s3:::sedfile-bucket/sedfiles/*"
+        "arn:aws:secretsmanager:*:123456789012:secret:secrets-replicator/transformations/*"
       ]
     },
     {
@@ -628,7 +615,7 @@ ReplicationFailureAlarm:
 ### Encryption at Rest
 - Source secrets encrypted with KMS CMK
 - Destination secrets encrypted with KMS CMK (may be different key)
-- S3 sedfile encrypted with SSE-KMS
+- Transformation secrets encrypted with KMS (default aws/secretsmanager or CMK)
 - CloudWatch Logs encrypted with KMS (optional)
 
 ### Least Privilege
@@ -683,7 +670,7 @@ ReplicationFailureAlarm:
 
 ### Cost Optimization
 - Use Lambda reserved concurrency to control costs
-- Cache sedfile in memory (Lambda execution context)
+- Cache transformation secrets in memory (Lambda execution context)
 - Minimize cross-region data transfer
 - Use VPC endpoints for Secrets Manager (avoid NAT gateway costs)
 
@@ -696,11 +683,11 @@ ReplicationFailureAlarm:
 
 ### Data Recovery
 - Secrets Manager provides point-in-time recovery (version history)
-- S3 sedfile bucket has versioning enabled
+- Transformation secrets have automatic versioning (AWSCURRENT, AWSPREVIOUS)
 - CloudWatch Logs retained for 30+ days
 
 ### Backup Strategy
-- Regular snapshots of sedfile configurations
+- Regular snapshots of transformation secret configurations
 - Export CloudWatch metrics to S3
 - Maintain runbooks for common failure scenarios
 
@@ -718,7 +705,7 @@ ReplicationFailureAlarm:
 ### Multi-Region Deployment
 - Deploy Lambda in each source region
 - Use regional EventBridge rules
-- Share sedfile via S3 cross-region replication
+- Create transformation secrets in each region (or use cross-region secret replication)
 
 ## Future Enhancements
 

@@ -24,8 +24,6 @@ class ReplicatorConfig:
     # Optional fields
     dest_secret_name: Optional[str] = None  # Override destination secret name
     dest_account_role_arn: Optional[str] = None  # Role ARN for cross-account
-    sedfile_s3_bucket: Optional[str] = None      # S3 bucket for sedfile
-    sedfile_s3_key: Optional[str] = None         # S3 key for sedfile
     transform_mode: str = 'sed'                   # Transformation mode (sed|json)
     log_level: str = 'INFO'                       # Log level
     enable_metrics: bool = True                   # Enable CloudWatch metrics
@@ -35,6 +33,13 @@ class ReplicatorConfig:
     # Advanced options
     timeout_seconds: int = 5                      # Regex timeout
     max_secret_size: int = 65536                  # Max secret size (64KB)
+
+    # Filtering options
+    source_secret_pattern: Optional[str] = None   # Regex pattern for filtering source secrets
+    source_secret_list: List[str] = field(default_factory=list)  # Explicit list of secret names
+    source_include_tags: List[tuple[str, str]] = field(default_factory=list)  # Include tags (key, value)
+    source_exclude_tags: List[tuple[str, str]] = field(default_factory=list)  # Exclude tags (key, value)
+    transformation_secret_prefix: str = 'secrets-replicator/transformations/'  # Prefix for transformation secrets
 
     # Internal/computed fields
     source_region: Optional[str] = field(default=None, init=False)
@@ -78,12 +83,6 @@ class ReplicatorConfig:
         if self.log_level == 'WARN':
             self.log_level = 'WARNING'  # Normalize to Python logging standard
 
-        # Validate S3 configuration (if one is set, both should be set)
-        if bool(self.sedfile_s3_bucket) != bool(self.sedfile_s3_key):
-            raise ConfigurationError(
-                "Both sedfile_s3_bucket and sedfile_s3_key must be set together, or both empty"
-            )
-
         # Validate role ARN format (basic check)
         if self.dest_account_role_arn and not self.dest_account_role_arn.startswith('arn:'):
             raise ConfigurationError(
@@ -105,6 +104,20 @@ class ReplicatorConfig:
             raise ConfigurationError(
                 f"max_secret_size must be between 1 and 65536 (got {self.max_secret_size})"
             )
+
+        # Validate transformation secret prefix
+        if not self.transformation_secret_prefix:
+            raise ConfigurationError("transformation_secret_prefix cannot be empty")
+
+        # Validate regex pattern if provided
+        if self.source_secret_pattern:
+            try:
+                import re
+                re.compile(self.source_secret_pattern)
+            except re.error as e:
+                raise ConfigurationError(
+                    f"Invalid source_secret_pattern regex: {e}"
+                )
 
     @staticmethod
     def _is_valid_region(region: str) -> bool:
@@ -138,6 +151,46 @@ class ReplicatorConfig:
         return parts[0] in valid_prefixes or region_prefix in valid_prefixes
 
 
+def parse_tag_filters(tag_string: str) -> List[tuple[str, str]]:
+    """
+    Parse comma-separated tag filters into list of (key, value) tuples.
+
+    Args:
+        tag_string: Comma-separated tag filters (e.g., "Key1=Value1,Key2=Value2")
+
+    Returns:
+        List of (key, value) tuples
+
+    Examples:
+        >>> parse_tag_filters("Replicate=true,Environment=prod")
+        [('Replicate', 'true'), ('Environment', 'prod')]
+        >>> parse_tag_filters("")
+        []
+    """
+    if not tag_string or not tag_string.strip():
+        return []
+
+    tags = []
+    for tag in tag_string.split(','):
+        tag = tag.strip()
+        if not tag:
+            continue
+
+        if '=' not in tag:
+            raise ConfigurationError(f"Invalid tag filter format: '{tag}' (expected Key=Value)")
+
+        key, value = tag.split('=', 1)
+        key = key.strip()
+        value = value.strip()
+
+        if not key or not value:
+            raise ConfigurationError(f"Invalid tag filter: '{tag}' (key and value cannot be empty)")
+
+        tags.append((key, value))
+
+    return tags
+
+
 def load_config_from_env() -> ReplicatorConfig:
     """
     Load configuration from environment variables.
@@ -146,8 +199,6 @@ def load_config_from_env() -> ReplicatorConfig:
         DEST_REGION (required): Destination AWS region
         DEST_SECRET_NAME: Override destination secret name
         DEST_ACCOUNT_ROLE_ARN: IAM role ARN for cross-account access
-        SEDFILE_S3_BUCKET: S3 bucket containing sedfile
-        SEDFILE_S3_KEY: S3 key for sedfile
         TRANSFORM_MODE: Transformation mode (default: 'sed')
         LOG_LEVEL: Log level (default: 'INFO')
         ENABLE_METRICS: Enable CloudWatch metrics (default: 'true')
@@ -155,6 +206,11 @@ def load_config_from_env() -> ReplicatorConfig:
         DLQ_ARN: Dead Letter Queue ARN
         TIMEOUT_SECONDS: Regex timeout (default: 5)
         MAX_SECRET_SIZE: Maximum secret size (default: 65536)
+        SOURCE_SECRET_PATTERN: Regex pattern for filtering source secrets
+        SOURCE_SECRET_LIST: Comma-separated list of secret names to include
+        SOURCE_INCLUDE_TAGS: Comma-separated tag filters to include (Key=Value,Key2=Value2)
+        SOURCE_EXCLUDE_TAGS: Comma-separated tag filters to exclude (Key=Value,Key2=Value2)
+        TRANSFORMATION_SECRET_PREFIX: Prefix for transformation secrets (default: 'transformations/')
 
     Returns:
         ReplicatorConfig object
@@ -177,8 +233,6 @@ def load_config_from_env() -> ReplicatorConfig:
     # Optional fields
     dest_secret_name = os.environ.get('DEST_SECRET_NAME', '').strip() or None
     dest_account_role_arn = os.environ.get('DEST_ACCOUNT_ROLE_ARN', '').strip() or None
-    sedfile_s3_bucket = os.environ.get('SEDFILE_S3_BUCKET', '').strip() or None
-    sedfile_s3_key = os.environ.get('SEDFILE_S3_KEY', '').strip() or None
     transform_mode = os.environ.get('TRANSFORM_MODE', 'sed').strip()
     log_level = os.environ.get('LOG_LEVEL', 'INFO').strip()
 
@@ -194,54 +248,36 @@ def load_config_from_env() -> ReplicatorConfig:
     timeout_seconds = int(os.environ.get('TIMEOUT_SECONDS', '5'))
     max_secret_size = int(os.environ.get('MAX_SECRET_SIZE', '65536'))
 
+    # Filtering options
+    source_secret_pattern = os.environ.get('SOURCE_SECRET_PATTERN', '').strip() or None
+    source_secret_list_str = os.environ.get('SOURCE_SECRET_LIST', '').strip()
+    source_secret_list = [s.strip() for s in source_secret_list_str.split(',') if s.strip()] if source_secret_list_str else []
+
+    source_include_tags_str = os.environ.get('SOURCE_INCLUDE_TAGS', '').strip()
+    source_include_tags = parse_tag_filters(source_include_tags_str)
+
+    source_exclude_tags_str = os.environ.get('SOURCE_EXCLUDE_TAGS', '').strip()
+    source_exclude_tags = parse_tag_filters(source_exclude_tags_str)
+
+    transformation_secret_prefix = os.environ.get('TRANSFORMATION_SECRET_PREFIX', 'secrets-replicator/transformations/').strip()
+
     return ReplicatorConfig(
         dest_region=dest_region,
         dest_secret_name=dest_secret_name,
         dest_account_role_arn=dest_account_role_arn,
-        sedfile_s3_bucket=sedfile_s3_bucket,
-        sedfile_s3_key=sedfile_s3_key,
         transform_mode=transform_mode,
         log_level=log_level,
         enable_metrics=enable_metrics,
         kms_key_id=kms_key_id,
         dlq_arn=dlq_arn,
         timeout_seconds=timeout_seconds,
-        max_secret_size=max_secret_size
+        max_secret_size=max_secret_size,
+        source_secret_pattern=source_secret_pattern,
+        source_secret_list=source_secret_list,
+        source_include_tags=source_include_tags,
+        source_exclude_tags=source_exclude_tags,
+        transformation_secret_prefix=transformation_secret_prefix
     )
-
-
-def get_sedfile_location(config: ReplicatorConfig) -> tuple[str, Optional[str]]:
-    """
-    Determine sedfile location based on configuration.
-
-    Returns:
-        Tuple of (location_type, location_value)
-        - ('s3', 's3://bucket/key') if S3 is configured
-        - ('bundled', None) if using bundled sedfile
-
-    Args:
-        config: ReplicatorConfig object
-
-    Returns:
-        Tuple of location type and value
-
-    Examples:
-        >>> config = ReplicatorConfig(dest_region='us-west-2')
-        >>> get_sedfile_location(config)
-        ('bundled', None)
-        >>> config = ReplicatorConfig(
-        ...     dest_region='us-west-2',
-        ...     sedfile_s3_bucket='my-bucket',
-        ...     sedfile_s3_key='sedfiles/default.sed'
-        ... )
-        >>> get_sedfile_location(config)
-        ('s3', 's3://my-bucket/sedfiles/default.sed')
-    """
-    if config.sedfile_s3_bucket and config.sedfile_s3_key:
-        s3_path = f"s3://{config.sedfile_s3_bucket}/{config.sedfile_s3_key}"
-        return ('s3', s3_path)
-    else:
-        return ('bundled', None)
 
 
 def is_cross_account(config: ReplicatorConfig) -> bool:
