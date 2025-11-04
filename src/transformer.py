@@ -67,6 +67,72 @@ class JsonMapping:
             raise TransformationError(f"Invalid JSONPath '{self.path}': {e}")
 
 
+# Auto-detection
+def detect_transform_type(content: str) -> str:
+    """
+    Auto-detect transformation type from content.
+
+    Detection logic:
+    1. Try to parse as JSON
+    2. If JSON object with JSONPath keys ($.xxx) → JSON mode
+    3. Otherwise → sed mode (more permissive, handles all text)
+
+    Args:
+        content: Transformation content to analyze
+
+    Returns:
+        'json' or 'sed'
+    """
+    content = content.strip()
+
+    # Empty content defaults to sed (will result in no-op)
+    if not content:
+        return 'sed'
+
+    # Try JSON parsing first (more structured format)
+    try:
+        parsed = json.loads(content)
+
+        # Must be a JSON object (dict)
+        if isinstance(parsed, dict):
+            # Check for JSONPath patterns in keys (must start with $.)
+            if any(isinstance(key, str) and key.startswith('$.') for key in parsed.keys()):
+                return 'json'
+    except (json.JSONDecodeError, ValueError):
+        # Not valid JSON, fall through to sed
+        pass
+
+    # Default to sed (handles all text-based patterns including sed scripts)
+    return 'sed'
+
+
+def parse_transform_names(tag_value: str) -> List[str]:
+    """
+    Parse transformation secret names from tag value.
+
+    Supports single name or comma-separated list of names.
+
+    Args:
+        tag_value: Tag value containing transformation name(s)
+
+    Returns:
+        List of transformation secret names (without prefix)
+
+    Examples:
+        'region-swap' → ['region-swap']
+        'region-swap,account-swap,prod-overrides' → ['region-swap', 'account-swap', 'prod-overrides']
+        'region-swap, account-swap ' → ['region-swap', 'account-swap']
+    """
+    if not tag_value or not tag_value.strip():
+        return []
+
+    # Split by comma and strip whitespace from each name
+    names = [name.strip() for name in tag_value.split(',')]
+
+    # Filter out empty strings
+    return [name for name in names if name]
+
+
 # Sed-style transformations
 def parse_sedfile(content: str) -> List[SedRule]:
     """

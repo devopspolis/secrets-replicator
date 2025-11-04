@@ -24,7 +24,7 @@ class ReplicatorConfig:
     # Optional fields
     dest_secret_name: Optional[str] = None  # Override destination secret name
     dest_account_role_arn: Optional[str] = None  # Role ARN for cross-account
-    transform_mode: str = 'sed'                   # Transformation mode (sed|json)
+    transform_mode: str = 'auto'                  # Transformation mode (auto|sed|json)
     log_level: str = 'INFO'                       # Log level
     enable_metrics: bool = True                   # Enable CloudWatch metrics
     kms_key_id: Optional[str] = None              # KMS key for destination encryption
@@ -65,7 +65,7 @@ class ReplicatorConfig:
             raise ConfigurationError(f"Invalid dest_region format: {self.dest_region}")
 
         # Validate transform mode
-        valid_modes = ['sed', 'json']
+        valid_modes = ['auto', 'sed', 'json']
         if self.transform_mode not in valid_modes:
             raise ConfigurationError(
                 f"Invalid transform_mode: {self.transform_mode} (must be one of {valid_modes})"

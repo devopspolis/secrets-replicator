@@ -512,3 +512,112 @@ line3: us-east-1'''
         # Note: jsonpath-ng may handle arrays differently
         # This test documents the current behavior
         assert isinstance(result_obj['endpoints'], list)
+
+
+class TestDetectTransformType:
+    """Tests for detect_transform_type function (auto-detection)"""
+
+    def test_detect_sed_simple(self):
+        """Test detection of simple sed script"""
+        from src.transformer import detect_transform_type
+        content = "s/foo/bar/g"
+        assert detect_transform_type(content) == 'sed'
+
+    def test_detect_sed_multiline(self):
+        """Test detection of multiline sed script"""
+        from src.transformer import detect_transform_type
+        content = """
+        # Comment
+        s/us-east-1/us-west-2/g
+        s/dev/prod/g
+        """
+        assert detect_transform_type(content) == 'sed'
+
+    def test_detect_json_simple(self):
+        """Test detection of JSON mapping"""
+        from src.transformer import detect_transform_type
+        content = '{"$.foo": "bar"}'
+        assert detect_transform_type(content) == 'json'
+
+    def test_detect_json_with_multiple_paths(self):
+        """Test detection of JSON with multiple JSONPath keys"""
+        from src.transformer import detect_transform_type
+        content = '{"$.api": "prod", "$.db": "prod-db"}'
+        assert detect_transform_type(content) == 'json'
+
+    def test_detect_json_object_without_jsonpath(self):
+        """Test JSON object without JSONPath keys defaults to sed"""
+        from src.transformer import detect_transform_type
+        content = '{"foo": "bar", "baz": "qux"}'
+        # No $.keys, so treated as sed (will be no-op)
+        assert detect_transform_type(content) == 'sed'
+
+    def test_detect_json_array(self):
+        """Test JSON array is not detected as JSON mode"""
+        from src.transformer import detect_transform_type
+        content = '["a", "b", "c"]'
+        assert detect_transform_type(content) == 'sed'
+
+    def test_detect_empty_content(self):
+        """Test empty content defaults to sed"""
+        from src.transformer import detect_transform_type
+        assert detect_transform_type("") == 'sed'
+        assert detect_transform_type("   ") == 'sed'
+
+    def test_detect_invalid_json(self):
+        """Test invalid JSON defaults to sed"""
+        from src.transformer import detect_transform_type
+        content = '{invalid json}'
+        assert detect_transform_type(content) == 'sed'
+
+    def test_detect_text_that_looks_like_json(self):
+        """Test text with curly braces but not JSON"""
+        from src.transformer import detect_transform_type
+        content = 's/{foo}/{bar}/g'
+        assert detect_transform_type(content) == 'sed'
+
+
+class TestParseTransformNames:
+    """Tests for parse_transform_names function (chain parsing)"""
+
+    def test_parse_single_name(self):
+        """Test parsing single transformation name"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('my-transform')
+        assert names == ['my-transform']
+
+    def test_parse_multiple_names(self):
+        """Test parsing comma-separated transformation names"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('transform1,transform2,transform3')
+        assert names == ['transform1', 'transform2', 'transform3']
+
+    def test_parse_with_spaces(self):
+        """Test parsing with spaces around commas"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('transform1, transform2 , transform3')
+        assert names == ['transform1', 'transform2', 'transform3']
+
+    def test_parse_empty_string(self):
+        """Test parsing empty string returns empty list"""
+        from src.transformer import parse_transform_names
+        assert parse_transform_names('') == []
+        assert parse_transform_names('   ') == []
+
+    def test_parse_with_trailing_comma(self):
+        """Test parsing with trailing comma ignores empty element"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('transform1,transform2,')
+        assert names == ['transform1', 'transform2']
+
+    def test_parse_with_extra_commas(self):
+        """Test parsing filters out empty elements from extra commas"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('transform1,,transform2')
+        assert names == ['transform1', 'transform2']
+
+    def test_parse_complex_names(self):
+        """Test parsing complex transformation names"""
+        from src.transformer import parse_transform_names
+        names = parse_transform_names('region-us-east-to-west,account-dev-to-prod,json-overrides')
+        assert names == ['region-us-east-to-west', 'account-dev-to-prod', 'json-overrides']

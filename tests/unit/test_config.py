@@ -19,7 +19,7 @@ class TestReplicatorConfig:
         """Test creating config with minimal required fields"""
         config = ReplicatorConfig(dest_region='us-west-2')
         assert config.dest_region == 'us-west-2'
-        assert config.transform_mode == 'sed'  # Default
+        assert config.transform_mode == 'auto'  # Default (changed from 'sed')
         assert config.log_level == 'INFO'  # Default
         assert config.enable_metrics is True  # Default
 
