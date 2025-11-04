@@ -220,6 +220,9 @@ aws secretsmanager tag-resource \
   --secret-id my-source-secret \
   --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 
+# Note: You can chain multiple transformations with comma-separated values:
+# --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion
+
 # 5. Test by updating source secret
 aws secretsmanager put-secret-value \
   --secret-id my-source-secret \
@@ -676,6 +679,99 @@ Use JSONPath expressions to map specific fields.
   "$.servers[1].host": "server2.prod.example.com"
 }
 ```
+
+### Transformation Chains
+
+Apply multiple transformations sequentially by specifying a **comma-separated list** in the tag:
+
+```bash
+# Apply transformations in order: region-swap → env-promotion → scale-up
+aws secretsmanager tag-resource \
+  --secret-id my-app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up
+```
+
+**Execution Flow**:
+```text
+Original Secret → region-swap → env-promotion → scale-up → Destination Secret
+```
+
+#### Chain Example 1: Region + Environment
+
+**Scenario**: Replicate from us-east-1 dev to us-west-2 prod
+
+```bash
+# Create region transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-east-to-west \
+  --secret-string 's/us-east-1/us-west-2/g'
+
+# Create environment transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/dev-to-prod \
+  --secret-string 's/dev/prod/g
+s/"log_level": "DEBUG"/"log_level": "INFO"/g'
+
+# Tag source secret with chain
+aws secretsmanager tag-resource \
+  --secret-id app-db-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod
+```
+
+**Result**:
+```text
+Original:  {"host": "dev-db.us-east-1.rds.amazonaws.com", "log_level": "DEBUG"}
+Step 1:    {"host": "dev-db.us-west-2.rds.amazonaws.com", "log_level": "DEBUG"}
+Final:     {"host": "prod-db.us-west-2.rds.amazonaws.com", "log_level": "INFO"}
+```
+
+#### Chain Example 2: Mixed Sed + JSON
+
+**Scenario**: Apply broad regex changes, then precise JSON field updates
+
+```bash
+# Create sed transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string 's/us-east-1/us-west-2/g'
+
+# Create JSON transformation (auto-detected by format)
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/config-overrides \
+  --secret-string '{
+  "transformations": [
+    {"path": "$.max_connections", "find": "100", "replace": "500"},
+    {"path": "$.timeout_seconds", "find": "30", "replace": "60"}
+  ]
+}'
+
+# Tag source secret with mixed chain
+aws secretsmanager tag-resource \
+  --secret-id app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides
+```
+
+**Auto-Detection**: Each transformation in the chain is automatically detected as sed or JSON based on content format.
+
+#### Chain Example 3: Whitespace in Tag Value
+
+Whitespace around commas is automatically trimmed:
+
+```bash
+# These are equivalent:
+Value=region-swap,env-promotion,scale-up
+Value=region-swap, env-promotion, scale-up
+Value=region-swap , env-promotion , scale-up
+```
+
+#### Chain Best Practices
+
+1. **Order matters**: Transformations apply left-to-right
+2. **Keep chains short**: 2-3 transformations recommended
+3. **Test incrementally**: Test each transformation alone, then test the chain
+4. **Use descriptive names**: `Value=region-east-west,env-dev-prod` is self-documenting
+
+See [docs/transformations.md](docs/transformations.md) for comprehensive chain examples and use cases.
 
 ### Transformation Best Practices
 
