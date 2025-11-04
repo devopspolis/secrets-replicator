@@ -297,7 +297,7 @@ Configure via SAM template parameters or directly in Lambda:
 |----------|----------|---------|-------------|
 | `DEST_REGION` | ✅ Yes | - | Destination AWS region |
 | `DEST_SECRET_NAME` | No | *(same as source)* | Override destination secret name (leave empty to use source name) |
-| `TRANSFORM_MODE` | ✅ Yes | - | Transformation mode: `sed` or `json` |
+| `TRANSFORM_MODE` | No | `auto` | Transformation mode: `auto` (detect), `sed`, or `json` |
 | `TRANSFORMATION_SECRET_PREFIX` | No | `secrets-replicator/transformations/` | Prefix for transformation secrets (excluded from replication) |
 | `DEST_ACCOUNT_ROLE_ARN` | No | - | IAM role ARN in destination account (cross-account) |
 | `KMS_KEY_ID` | No | - | KMS key ID for destination secret encryption |
@@ -317,7 +317,7 @@ Configure when deploying with SAM:
 [default.deploy.parameters]
 parameter_overrides = [
   "DestinationRegion=us-west-2",
-  "TransformMode=sed",
+  # "TransformMode=auto",  # Optional - auto-detects by default
   "EnableMetrics=true"
 ]
 ```
@@ -363,7 +363,7 @@ aws secretsmanager tag-resource \
 3. Lambda environment variables:
 ```bash
 DEST_REGION=us-west-2
-TRANSFORM_MODE=sed
+# TRANSFORM_MODE=auto  # Optional - auto-detects sed format
 ```
 
 **Destination Secret** (`us-west-2`):
@@ -430,7 +430,7 @@ DEST_SECRET_NAME=app-credentials
 DEST_REGION=us-east-1
 DEST_ACCOUNT_ROLE_ARN=arn:aws:iam::222222222222:role/SecretsReplicatorDestRole
 DEST_ROLE_EXTERNAL_ID=my-secure-external-id-12345
-TRANSFORM_MODE=sed
+# TRANSFORM_MODE=auto  # Optional - auto-detects sed format
 ```
 
 **Result**: Secrets replicated to application account with account-specific ARNs.
@@ -479,7 +479,7 @@ aws secretsmanager tag-resource \
 SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:app-config-dev
 DEST_SECRET_NAME=app-config-prod
 DEST_REGION=us-east-1
-TRANSFORM_MODE=json
+# TRANSFORM_MODE=auto  # Optional - can explicitly set to 'json' if needed
 ```
 
 **Destination Secret** (Prod):
@@ -539,7 +539,7 @@ aws secretsmanager tag-resource \
 3. Lambda environment variables:
 ```bash
 DEST_REGION=us-west-2
-TRANSFORM_MODE=sed
+# TRANSFORM_MODE=auto  # Optional - auto-detects sed format
 ```
 
 **Result**: Complete multi-region deployment with region-specific endpoints.
@@ -942,10 +942,11 @@ ERROR: AccessDenied - User is not authorized to perform secretsmanager:GetSecret
 
 **Causes**:
 - Incorrect sed pattern
-- Wrong `TRANSFORM_MODE`
+- Wrong `TRANSFORM_MODE` (if explicitly set)
 - Source secret missing `SecretsReplicator:TransformSecretName` tag
 - Transformation secret not found
 - Transformation secret name incorrect (includes prefix when it shouldn't)
+- Auto-detection failed to detect correct format
 
 **Solutions**:
 1. Test sed pattern locally: `echo "value" | sed 's/old/new/g'`

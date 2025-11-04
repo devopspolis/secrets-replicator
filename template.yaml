@@ -66,9 +66,12 @@ Parameters:
 
   TransformMode:
     Type: String
-    Description: Transformation mode (sed or json)
-    Default: sed
+    Description: |
+      Transformation mode: 'auto' (auto-detect from content), 'sed' (regex), or 'json' (JSONPath).
+      Default 'auto' detects JSON transformations (keys starting with $.) vs sed patterns.
+    Default: auto
     AllowedValues:
+      - auto
       - sed
       - json
 

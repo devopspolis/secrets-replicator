@@ -99,7 +99,7 @@ DEST_REGION                    # Required: Destination region (or comma-separate
 DEST_SECRET_NAME               # Optional: Override destination secret name
 DEST_ACCOUNT_ROLE_ARN          # Optional: Role ARN to assume for cross-account
 TRANSFORMATION_SECRET_PREFIX   # Optional: Prefix for transformation secrets (default: "secrets-replicator/transformations/")
-TRANSFORM_MODE                 # Optional: "sed" or "json" (default: "sed")
+TRANSFORM_MODE                 # Optional: "auto", "sed" or "json" (default: "auto")
 LOG_LEVEL                      # Optional: DEBUG, INFO, WARN, ERROR (default: INFO)
 DLQ_ARN                        # Optional: DLQ for failed events
 ENABLE_METRICS                 # Optional: Enable CloudWatch custom metrics (default: true)

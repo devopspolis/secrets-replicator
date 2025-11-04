@@ -229,7 +229,7 @@ Add KMS decrypt permission:
 **Diagnosis**:
 
 ```bash
-# Step 1: Check transformation mode
+# Step 1: Check transformation mode (default: auto)
 aws lambda get-function-configuration \
   --function-name secrets-replicator-prod-replicator \
   --query 'Environment.Variables.TRANSFORM_MODE'
@@ -311,13 +311,16 @@ else:
 
 **Solution D**: Check Transform Mode
 
-Ensure `TRANSFORM_MODE` is set correctly:
+Ensure `TRANSFORM_MODE` is set correctly (if explicitly configured):
 
 ```bash
-# Should be "sed" or "json"
+# Should be "auto" (default), "sed", or "json"
+# "auto" mode detects format automatically from content
 aws lambda update-function-configuration \
   --function-name secrets-replicator-prod-replicator \
-  --environment Variables={TRANSFORM_MODE=sed,...}
+  --environment Variables={TRANSFORM_MODE=auto,...}
+
+# Or explicitly set to sed/json if auto-detection isn't working
 ```
 
 ---

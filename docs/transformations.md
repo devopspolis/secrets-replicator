@@ -7,13 +7,15 @@ Comprehensive guide to secret value transformations in Secrets Replicator.
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Sed Transformations](#sed-transformations)
-3. [JSON Transformations](#json-transformations)
-4. [Transformation Patterns](#transformation-patterns)
-5. [Best Practices](#best-practices)
-6. [Testing Transformations](#testing-transformations)
-7. [Common Pitfalls](#common-pitfalls)
-8. [Advanced Techniques](#advanced-techniques)
+2. [Auto-Detection](#auto-detection)
+3. [Transformation Chains](#transformation-chains)
+4. [Sed Transformations](#sed-transformations)
+5. [JSON Transformations](#json-transformations)
+6. [Transformation Patterns](#transformation-patterns)
+7. [Best Practices](#best-practices)
+8. [Testing Transformations](#testing-transformations)
+9. [Common Pitfalls](#common-pitfalls)
+10. [Advanced Techniques](#advanced-techniques)
 
 ---
 
@@ -23,6 +25,8 @@ Secrets Replicator supports two transformation modes:
 
 1. **Sed Mode**: Regex-based find/replace transformations using GNU sed syntax
 2. **JSON Mode**: JSONPath-based field mapping for structured JSON secrets
+
+**New in Version 1.1**: Auto-detection and transformation chains allow automatic format detection and sequential application of multiple transformations.
 
 ### When to Use Each Mode
 
@@ -35,6 +39,328 @@ Secrets Replicator supports two transformation modes:
 | Complex multi-line patterns | ✅ Recommended | ❌ Not supported |
 | Mixed content (JSON + text) | ✅ Works | ⚠️ JSON only |
 | Non-JSON secrets | ✅ Only option | ❌ Won't work |
+
+---
+
+## Auto-Detection
+
+Auto-detection allows Secrets Replicator to automatically determine whether a transformation is sed-style or JSON-based by analyzing the content.
+
+### How It Works
+
+When `TRANSFORM_MODE=auto` (default), the system analyzes each transformation secret:
+
+1. **Parse as JSON**: Attempt to parse transformation content as JSON
+2. **Check for JSONPath**: If JSON object with keys starting with `$.`, use JSON mode
+3. **Default to Sed**: Otherwise, treat as sed-style transformation
+
+### Detection Logic
+
+```python
+# Sed transformation detected
+s/us-east-1/us-west-2/g
+# Comment lines are ignored
+s/dev/prod/g
+
+# JSON transformation detected (keys start with $.)
+{
+  "$.database.host": "prod-db.example.com",
+  "$.environment": "production"
+}
+
+# Plain JSON object - detected as SED (no JSONPath keys)
+{
+  "foo": "bar",
+  "baz": "qux"
+}
+```
+
+### Benefits
+
+✅ **Simpler Configuration**: No need to specify mode for each transformation
+✅ **Flexible**: Mix sed and JSON transformations in chains without changing config
+✅ **Backward Compatible**: Existing configurations work unchanged
+✅ **Fail-Safe**: Falls back to sed mode (more permissive) when uncertain
+
+### Examples
+
+#### Example 1: Auto-Detected Sed Transformation
+
+**Transformation Secret** (`secrets-replicator/transformations/region-swap`):
+```bash
+# This is auto-detected as sed mode
+s/us-east-1/us-west-2/g
+s/\.rds\.amazonaws\.com/\.rds.amazonaws.com/g
+```
+
+**Configuration**:
+```bash
+# TRANSFORM_MODE not specified - defaults to 'auto'
+DEST_REGION=us-west-2
+```
+
+**Tag Source Secret**:
+```bash
+aws secretsmanager tag-resource \
+  --secret-id app-db-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
+```
+
+#### Example 2: Auto-Detected JSON Transformation
+
+**Transformation Secret** (`secrets-replicator/transformations/env-promotion`):
+```json
+{
+  "transformations": [
+    {
+      "path": "$.environment",
+      "find": "dev",
+      "replace": "prod"
+    },
+    {
+      "path": "$.database.host",
+      "find": "dev-db.example.com",
+      "replace": "prod-db.example.com"
+    }
+  ]
+}
+```
+
+**Configuration**:
+```bash
+# TRANSFORM_MODE=auto (default) detects JSON format automatically
+DEST_REGION=us-east-1
+```
+
+**Tag Source Secret**:
+```bash
+aws secretsmanager tag-resource \
+  --secret-id app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=env-promotion
+```
+
+### When to Override Auto-Detection
+
+Explicitly set `TRANSFORM_MODE` when:
+
+1. **Performance**: Bypass detection overhead for high-volume replications
+2. **Debugging**: Force specific mode to troubleshoot transformation issues
+3. **Edge Cases**: Content matches wrong format (rare)
+
+```bash
+# Explicitly force sed mode
+TRANSFORM_MODE=sed
+
+# Explicitly force JSON mode
+TRANSFORM_MODE=json
+```
+
+---
+
+## Transformation Chains
+
+Transformation chains allow sequential application of multiple transformations, where each transformation operates on the output of the previous one.
+
+### How It Works
+
+Instead of specifying a single transformation name in the tag, provide a **comma-separated list**:
+
+```bash
+aws secretsmanager tag-resource \
+  --secret-id my-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=transform1,transform2,transform3
+```
+
+**Execution Flow**:
+```
+Original Secret → Transform1 → Transform2 → Transform3 → Destination Secret
+```
+
+Each transformation:
+1. Receives the output of the previous transformation as input
+2. Auto-detects format (sed or JSON) independently
+3. Applies its transformation rules
+4. Passes result to next transformation
+
+### Use Cases
+
+#### Use Case 1: Region + Environment Transformation
+
+**Scenario**: Replicate from `us-east-1` dev to `us-west-2` prod
+
+**Transformation 1** - Region Swap (`secrets-replicator/transformations/region-east-to-west`):
+```bash
+s/us-east-1/us-west-2/g
+s/\.rds\.us-east-1\./\.rds.us-west-2./g
+```
+
+**Transformation 2** - Environment Promotion (`secrets-replicator/transformations/dev-to-prod`):
+```bash
+s/dev/prod/g
+s/development/production/g
+s/"log_level": "DEBUG"/"log_level": "INFO"/g
+```
+
+**Setup**:
+```bash
+# Create both transformation secrets
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-east-to-west \
+  --secret-string 's/us-east-1/us-west-2/g'
+
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/dev-to-prod \
+  --secret-string 's/dev/prod/g
+s/"log_level": "DEBUG"/"log_level": "INFO"/g'
+
+# Tag source secret with chain
+aws secretsmanager tag-resource \
+  --secret-id app-db-credentials \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod
+```
+
+**Result**:
+```
+Original:  {"host": "dev-db.us-east-1.rds.amazonaws.com", "log_level": "DEBUG"}
+After T1:  {"host": "dev-db.us-west-2.rds.amazonaws.com", "log_level": "DEBUG"}
+After T2:  {"host": "prod-db.us-west-2.rds.amazonaws.com", "log_level": "INFO"}
+```
+
+#### Use Case 2: Mixed Sed + JSON Chain
+
+**Scenario**: Apply broad regex changes, then precise JSON field updates
+
+**Transformation 1** - Sed (`region-swap`):
+```bash
+s/us-east-1/us-west-2/g
+```
+
+**Transformation 2** - JSON (`config-overrides`):
+```json
+{
+  "transformations": [
+    {
+      "path": "$.max_connections",
+      "find": "100",
+      "replace": "500"
+    },
+    {
+      "path": "$.timeout_seconds",
+      "find": "30",
+      "replace": "60"
+    }
+  ]
+}
+```
+
+**Setup**:
+```bash
+aws secretsmanager tag-resource \
+  --secret-id app-config \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides
+```
+
+**Auto-Detection**: Each transformation in the chain is auto-detected independently.
+
+#### Use Case 3: Layered Configuration
+
+**Scenario**: Base transformations + environment-specific overrides
+
+**Chain**: `base-config,aws-resources,prod-overrides`
+
+1. **base-config**: Common replacements (hostnames, protocols)
+2. **aws-resources**: AWS-specific ARNs and regions
+3. **prod-overrides**: Production-specific settings (timeouts, limits)
+
+**Benefit**: Reusable transformation modules - mix and match for different environments.
+
+### Chain Best Practices
+
+1. **Order Matters**: Transformations apply sequentially - order affects outcome
+   ```bash
+   # Different results!
+   Value=region-swap,env-promotion  # Region first, then environment
+   Value=env-promotion,region-swap  # Environment first, then region
+   ```
+
+2. **Test Each Step**: Verify intermediate outputs to debug chain issues
+   ```bash
+   # Test transformation 1 alone
+   Value=transform1
+
+   # Then test chain
+   Value=transform1,transform2
+   ```
+
+3. **Keep Chains Short**: 2-3 transformations recommended for maintainability
+
+4. **Use Descriptive Names**: Makes chains self-documenting
+   ```bash
+   # Good
+   Value=region-east-to-west,account-dev-to-prod,scale-up
+
+   # Bad
+   Value=transform1,transform2,transform3
+   ```
+
+5. **Version Transformations**: Use Secrets Manager versioning to track changes
+   ```bash
+   aws secretsmanager update-secret \
+     --secret-id secrets-replicator/transformations/my-transform \
+     --secret-string "$(cat updated-rules.sed)"
+
+   # Rollback if needed
+   aws secretsmanager update-secret-version-stage \
+     --secret-id secrets-replicator/transformations/my-transform \
+     --version-stage AWSCURRENT \
+     --move-to-version-id <previous-version>
+   ```
+
+### Chain Monitoring
+
+CloudWatch logs show detailed chain execution:
+
+```json
+{
+  "message": "Transformation chain detected",
+  "transform_count": 3,
+  "transforms": ["region-swap", "env-promotion", "scale-up"]
+}
+
+{
+  "message": "Applying transformation step",
+  "step": 1,
+  "name": "region-swap",
+  "mode": "sed",
+  "rules_count": 5
+}
+
+{
+  "message": "Applying transformation step",
+  "step": 2,
+  "name": "env-promotion",
+  "mode": "json",
+  "rules_count": 8
+}
+```
+
+CloudWatch metrics include chain metadata:
+- `transformChainLength`: Number of transformations in chain
+- `rulesCount`: Total rules across all transformations
+
+### Error Handling in Chains
+
+**Fail-Fast Behavior**: If any transformation in chain fails, entire replication fails.
+
+**Example Error**:
+```
+ERROR: Transformation failed at step 2/3 (env-promotion): Invalid JSONPath expression '$.invalid..path'
+```
+
+**Recovery**:
+1. Fix broken transformation secret
+2. Re-trigger replication by updating source secret
+3. Check CloudWatch logs for step-by-step execution
 
 ---
 
