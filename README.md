@@ -221,7 +221,7 @@ aws secretsmanager tag-resource \
   --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 
 # Note: You can chain multiple transformations with comma-separated values:
-# --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion
+# --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion"
 
 # 5. Test by updating source secret
 aws secretsmanager put-secret-value \
@@ -688,7 +688,7 @@ Apply multiple transformations sequentially by specifying a **comma-separated li
 # Apply transformations in order: region-swap → env-promotion → scale-up
 aws secretsmanager tag-resource \
   --secret-id my-app-config \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up"
 ```
 
 **Execution Flow**:
@@ -715,7 +715,7 @@ s/"log_level": "DEBUG"/"log_level": "INFO"/g'
 # Tag source secret with chain
 aws secretsmanager tag-resource \
   --secret-id app-db-credentials \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod"
 ```
 
 **Result**:
@@ -748,7 +748,7 @@ aws secretsmanager create-secret \
 # Tag source secret with mixed chain
 aws secretsmanager tag-resource \
   --secret-id app-config \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides"
 ```
 
 **Auto-Detection**: Each transformation in the chain is automatically detected as sed or JSON based on content format.
@@ -758,18 +758,27 @@ aws secretsmanager tag-resource \
 Whitespace around commas is automatically trimmed:
 
 ```bash
-# These are equivalent:
-Value=region-swap,env-promotion,scale-up
-Value=region-swap, env-promotion, scale-up
-Value=region-swap , env-promotion , scale-up
+# These are equivalent (quotes required for CLI):
+--tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up"
+--tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap, env-promotion, scale-up"
+--tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap , env-promotion , scale-up"
 ```
 
 #### Chain Best Practices
 
-1. **Order matters**: Transformations apply left-to-right
-2. **Keep chains short**: 2-3 transformations recommended
-3. **Test incrementally**: Test each transformation alone, then test the chain
-4. **Use descriptive names**: `Value=region-east-west,env-dev-prod` is self-documenting
+1. **Always quote tag values with commas**: Required for AWS CLI parsing
+   ```bash
+   # ✅ Correct
+   --tags "Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3"
+
+   # ❌ Incorrect - CLI will fail
+   --tags Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3
+   ```
+
+2. **Order matters**: Transformations apply left-to-right
+3. **Keep chains short**: 2-3 transformations recommended
+4. **Test incrementally**: Test each transformation alone, then test the chain
+5. **Use descriptive names**: `Value=region-east-west,env-dev-prod` is self-documenting
 
 See [docs/transformations.md](docs/transformations.md) for comprehensive chain examples and use cases.
 

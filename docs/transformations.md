@@ -168,7 +168,7 @@ Instead of specifying a single transformation name in the tag, provide a **comma
 ```bash
 aws secretsmanager tag-resource \
   --secret-id my-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=transform1,transform2,transform3
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=transform1,transform2,transform3"
 ```
 
 **Execution Flow**:
@@ -216,7 +216,7 @@ s/"log_level": "DEBUG"/"log_level": "INFO"/g'
 # Tag source secret with chain
 aws secretsmanager tag-resource \
   --secret-id app-db-credentials \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod"
 ```
 
 **Result**:
@@ -257,7 +257,7 @@ s/us-east-1/us-west-2/g
 ```bash
 aws secretsmanager tag-resource \
   --secret-id app-config \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides
+  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides"
 ```
 
 **Auto-Detection**: Each transformation in the chain is auto-detected independently.
@@ -276,14 +276,23 @@ aws secretsmanager tag-resource \
 
 ### Chain Best Practices
 
-1. **Order Matters**: Transformations apply sequentially - order affects outcome
+1. **Always Quote Tag Values with Commas**: Required for AWS CLI parsing
+   ```bash
+   # ✅ Correct
+   --tags "Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3"
+
+   # ❌ Incorrect - CLI will misparse commas
+   --tags Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3
+   ```
+
+2. **Order Matters**: Transformations apply sequentially - order affects outcome
    ```bash
    # Different results!
    Value=region-swap,env-promotion  # Region first, then environment
    Value=env-promotion,region-swap  # Environment first, then region
    ```
 
-2. **Test Each Step**: Verify intermediate outputs to debug chain issues
+3. **Test Each Step**: Verify intermediate outputs to debug chain issues
    ```bash
    # Test transformation 1 alone
    Value=transform1
@@ -292,9 +301,9 @@ aws secretsmanager tag-resource \
    Value=transform1,transform2
    ```
 
-3. **Keep Chains Short**: 2-3 transformations recommended for maintainability
+4. **Keep Chains Short**: 2-3 transformations recommended for maintainability
 
-4. **Use Descriptive Names**: Makes chains self-documenting
+5. **Use Descriptive Names**: Makes chains self-documenting
    ```bash
    # Good
    Value=region-east-to-west,account-dev-to-prod,scale-up
@@ -303,7 +312,7 @@ aws secretsmanager tag-resource \
    Value=transform1,transform2,transform3
    ```
 
-5. **Version Transformations**: Use Secrets Manager versioning to track changes
+6. **Version Transformations**: Use Secrets Manager versioning to track changes
    ```bash
    aws secretsmanager update-secret \
      --secret-id secrets-replicator/transformations/my-transform \
