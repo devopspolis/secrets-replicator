@@ -365,3 +365,156 @@ class TestHandlerAWSIntegration:
         # Note: We can't easily test log output in unit tests,
         # but we verify the replication succeeds
         assert response['destSecretId'] == 'custom-destination-name'
+
+
+class TestPassThroughReplication:
+    """Tests for pass-through replication (no transformation tag)"""
+
+    @patch.dict(os.environ, {
+        'DEST_REGION': 'us-west-2'
+    })
+    @patch('src.handler.create_secrets_manager_client')
+    def test_passthrough_replication_no_tag(self, mock_create_client):
+        """Test pass-through replication when no transformation tag is present"""
+        # First client handles tags - return empty tags (no transformation tag)
+        mock_tags = MagicMock()
+        mock_tags.get_secret_tags.return_value = {}  # No transformation tag
+
+        # Second client handles source secret
+        mock_source = create_mock_source_client('{"host":"db.example.com","port":"5432"}')
+
+        # Third client handles destination
+        mock_dest = create_mock_dest_client()
+
+        mock_create_client.side_effect = [mock_tags, mock_source, mock_dest]
+
+        context = Mock()
+        context.request_id = 'test-passthrough'
+
+        response = lambda_handler(PUT_SECRET_VALUE_EVENT, context)
+
+        # Verify successful replication
+        assert response['statusCode'] == 200
+        assert 'replicated successfully' in response['body']
+        assert response['transformMode'] == 'passthrough'
+        assert response['rulesCount'] == 0
+        assert response['transformChainLength'] == 0
+
+        # Verify destination was written with original (untransformed) value
+        assert mock_dest.put_secret.called
+        call_kwargs = mock_dest.put_secret.call_args.kwargs
+        assert call_kwargs['secret_value'] == '{"host":"db.example.com","port":"5432"}'  # Original value
+
+    @patch.dict(os.environ, {
+        'DEST_REGION': 'us-west-2'
+    })
+    @patch('src.handler.create_secrets_manager_client')
+    def test_passthrough_cross_region(self, mock_create_client):
+        """Test pass-through replication works across regions"""
+        mock_tags = MagicMock()
+        mock_tags.get_secret_tags.return_value = {}
+
+        mock_source = create_mock_source_client('supersecretpassword123')
+        mock_dest = create_mock_dest_client()
+
+        mock_create_client.side_effect = [mock_tags, mock_source, mock_dest]
+
+        context = Mock()
+        context.request_id = 'test-passthrough-xregion'
+
+        response = lambda_handler(PUT_SECRET_VALUE_EVENT, context)
+
+        assert response['statusCode'] == 200
+        assert response['sourceRegion'] == 'us-east-1'
+        assert response['destRegion'] == 'us-west-2'
+        assert response['transformMode'] == 'passthrough'
+
+        # Original value should be replicated without modification
+        call_kwargs = mock_dest.put_secret.call_args.kwargs
+        assert call_kwargs['secret_value'] == 'supersecretpassword123'
+
+    @patch.dict(os.environ, {
+        'DEST_REGION': 'us-west-2'
+    })
+    @patch('src.handler.create_secrets_manager_client')
+    def test_passthrough_binary_secret(self, mock_create_client):
+        """Test that binary secrets return 501 (not yet implemented)"""
+        mock_tags = MagicMock()
+        mock_tags.get_secret_tags.return_value = {}
+
+        # Create binary secret
+        mock_source = MagicMock()
+        mock_source.get_secret.return_value = SecretValue(
+            secret_binary=b'binary_data_12345',
+            arn='arn:aws:secretsmanager:us-east-1:123456789012:secret:binary-secret-abc123',
+            name='binary-secret',
+            version_id='v1',
+            version_stages=['AWSCURRENT']
+        )
+
+        mock_dest = create_mock_dest_client()
+
+        mock_create_client.side_effect = [mock_tags, mock_source, mock_dest]
+
+        context = Mock()
+        context.request_id = 'test-passthrough-binary'
+
+        response = lambda_handler(PUT_SECRET_VALUE_EVENT, context)
+
+        # Binary secrets are not yet supported (would require additional implementation)
+        assert response['statusCode'] == 501
+        assert 'not implemented' in response['body'].lower()
+
+        # Destination should not be called for binary secrets
+        assert not mock_dest.put_secret.called
+
+    @patch.dict(os.environ, {
+        'DEST_REGION': 'us-west-2'
+    })
+    @patch('src.handler.create_secrets_manager_client')
+    def test_passthrough_with_json_secret(self, mock_create_client):
+        """Test pass-through preserves JSON structure exactly"""
+        mock_tags = MagicMock()
+        mock_tags.get_secret_tags.return_value = {}
+
+        json_secret = '{"user":"admin","pass":"secret123","config":{"timeout":30,"retries":3}}'
+        mock_source = create_mock_source_client(json_secret)
+        mock_dest = create_mock_dest_client()
+
+        mock_create_client.side_effect = [mock_tags, mock_source, mock_dest]
+
+        context = Mock()
+        context.request_id = 'test-passthrough-json'
+
+        response = lambda_handler(PUT_SECRET_VALUE_EVENT, context)
+
+        assert response['statusCode'] == 200
+        assert response['transformMode'] == 'passthrough'
+
+        # JSON should be replicated exactly as-is
+        call_kwargs = mock_dest.put_secret.call_args.kwargs
+        assert call_kwargs['secret_value'] == json_secret
+
+    @patch.dict(os.environ, {
+        'DEST_REGION': 'us-east-1'  # Same region
+    })
+    @patch('src.handler.create_secrets_manager_client')
+    def test_passthrough_same_region(self, mock_create_client):
+        """Test pass-through replication works within same region"""
+        mock_tags = MagicMock()
+        mock_tags.get_secret_tags.return_value = {}
+
+        mock_source = create_mock_source_client('sameregionsecret')
+        mock_dest = create_mock_dest_client()
+
+        mock_create_client.side_effect = [mock_tags, mock_source, mock_dest]
+
+        context = Mock()
+        context.request_id = 'test-passthrough-same-region'
+
+        response = lambda_handler(PUT_SECRET_VALUE_EVENT, context)
+
+        assert response['statusCode'] == 200
+        assert response['sourceRegion'] == 'us-east-1'
+        assert response['destRegion'] == 'us-east-1'
+        assert response['transformMode'] == 'passthrough'

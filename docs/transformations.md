@@ -7,38 +7,182 @@ Comprehensive guide to secret value transformations in Secrets Replicator.
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Auto-Detection](#auto-detection)
-3. [Transformation Chains](#transformation-chains)
-4. [Sed Transformations](#sed-transformations)
-5. [JSON Transformations](#json-transformations)
-6. [Transformation Patterns](#transformation-patterns)
-7. [Best Practices](#best-practices)
-8. [Testing Transformations](#testing-transformations)
-9. [Common Pitfalls](#common-pitfalls)
-10. [Advanced Techniques](#advanced-techniques)
+2. [Pass-Through Replication](#pass-through-replication)
+3. [Auto-Detection](#auto-detection)
+4. [Transformation Chains](#transformation-chains)
+5. [Sed Transformations](#sed-transformations)
+6. [JSON Transformations](#json-transformations)
+7. [Transformation Patterns](#transformation-patterns)
+8. [Best Practices](#best-practices)
+9. [Testing Transformations](#testing-transformations)
+10. [Common Pitfalls](#common-pitfalls)
+11. [Advanced Techniques](#advanced-techniques)
 
 ---
 
 ## Overview
 
-Secrets Replicator supports two transformation modes:
+Secrets Replicator supports three replication modes:
 
-1. **Sed Mode**: Regex-based find/replace transformations using GNU sed syntax
-2. **JSON Mode**: JSONPath-based field mapping for structured JSON secrets
+1. **Pass-Through Mode**: Simple copy without transformation (no tag required)
+2. **Sed Mode**: Regex-based find/replace transformations using GNU sed syntax
+3. **JSON Mode**: JSONPath-based field mapping for structured JSON secrets
 
 **New in Version 1.1**: Auto-detection and transformation chains allow automatic format detection and sequential application of multiple transformations.
 
+**New in Version 1.2**: Pass-through replication allows simple secret copying without requiring transformation secrets.
+
 ### When to Use Each Mode
 
-| Use Case | Sed Mode | JSON Mode |
-|----------|----------|-----------|
-| Simple find/replace | ✅ Recommended | ❌ Overkill |
-| Region swapping | ✅ Recommended | ⚠️ Possible but verbose |
-| Environment promotion | ⚠️ Risky (broad patterns) | ✅ Recommended |
-| Structured field mapping | ❌ Complex | ✅ Recommended |
-| Complex multi-line patterns | ✅ Recommended | ❌ Not supported |
-| Mixed content (JSON + text) | ✅ Works | ⚠️ JSON only |
-| Non-JSON secrets | ✅ Only option | ❌ Won't work |
+| Use Case | Pass-Through | Sed Mode | JSON Mode |
+|----------|--------------|----------|-----------|
+| Simple DR/backup | ✅ Recommended | ❌ Not needed | ❌ Not needed |
+| Cross-account sharing (no changes) | ✅ Recommended | ❌ Not needed | ❌ Not needed |
+| Simple find/replace | ❌ No transformation | ✅ Recommended | ❌ Overkill |
+| Region swapping | ❌ No transformation | ✅ Recommended | ⚠️ Possible but verbose |
+| Environment promotion | ❌ No transformation | ⚠️ Risky (broad patterns) | ✅ Recommended |
+| Structured field mapping | ❌ No transformation | ❌ Complex | ✅ Recommended |
+| Complex multi-line patterns | ❌ No transformation | ✅ Recommended | ❌ Not supported |
+| Mixed content (JSON + text) | ✅ Exact copy | ✅ Works | ⚠️ JSON only |
+| Non-JSON secrets | ✅ Exact copy | ✅ Only transform option | ❌ Won't work |
+
+---
+
+## Pass-Through Replication
+
+Pass-through replication performs a simple copy of the secret value from source to destination **without any transformation**. This mode is activated automatically when a source secret does not have the `SecretsReplicator:TransformSecretName` tag.
+
+### Use Cases
+
+✅ **Disaster Recovery**: Maintain identical copies of secrets across regions for failover
+✅ **Secret Backup**: Create backup copies in secondary regions
+✅ **Cross-Account Sharing**: Share secrets across AWS accounts without modification
+✅ **Testing**: Test replication setup before adding transformation complexity
+
+### How It Works
+
+1. Source secret update triggers EventBridge event
+2. Lambda detects no `SecretsReplicator:TransformSecretName` tag
+3. Lambda retrieves source secret value as-is
+4. Lambda writes exact copy to destination (no transformation applied)
+5. Returns HTTP 200 with `transformMode: "passthrough"`
+
+### Setup
+
+**No configuration required!** Simply deploy Secrets Replicator and it will automatically replicate any secrets that do not have a transformation tag.
+
+```bash
+# Deploy Lambda (one-time setup)
+sam deploy --parameter-overrides DestinationRegion=us-west-2
+
+# Create or update any secret - it will be automatically replicated
+aws secretsmanager put-secret-value \
+  --secret-id my-app-secret \
+  --secret-string '{"username":"admin","password":"secret123"}'
+
+# Verify replication (wait 2-5 seconds)
+aws secretsmanager get-secret-value \
+  --secret-id my-app-secret \
+  --region us-west-2 \
+  --query SecretString \
+  --output text
+
+# Output: {"username":"admin","password":"secret123"}  (exact copy)
+```
+
+### Example: Cross-Region Backup
+
+**Scenario**: Maintain backup copies of all production secrets in `us-west-2` for disaster recovery.
+
+```bash
+# Deploy Lambda targeting backup region
+sam deploy --parameter-overrides \
+  DestinationRegion=us-west-2 \
+  SourceSecretPattern='arn:aws:secretsmanager:us-east-1:*:secret:prod-*'
+
+# All secrets matching pattern will be automatically replicated without transformation
+# No tagging required!
+```
+
+### Example: Cross-Account Secret Sharing
+
+**Scenario**: Share secrets from production account to DR account without modification.
+
+```bash
+# In DR account, create IAM role with trust policy
+aws iam create-role \
+  --role-name SecretsReplicatorDestinationRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::111122223333:role/prod-secrets-replicator-role"
+      },
+      "Action": "sts:AssumeRole",
+      "Condition": {
+        "StringEquals": {
+          "sts:ExternalId": "my-external-id-12345"
+        }
+      }
+    }]
+  }'
+
+# Deploy Lambda in production account with cross-account role
+sam deploy --parameter-overrides \
+  DestinationRegion=us-east-1 \
+  DestinationAccountRoleArn=arn:aws:iam::444455556666:role/SecretsReplicatorDestinationRole
+```
+
+### Response Format
+
+```json
+{
+  "statusCode": 200,
+  "body": "Secret replicated successfully",
+  "transformMode": "passthrough",
+  "rulesCount": 0,
+  "transformChainLength": 0,
+  "sourceRegion": "us-east-1",
+  "destRegion": "us-west-2",
+  "secretId": "my-app-secret",
+  "durationMs": 243.51
+}
+```
+
+### Enabling Transformations Later
+
+To add transformations to a pass-through secret, simply add the transformation tag:
+
+```bash
+# Secret is currently being replicated in pass-through mode
+
+# Add transformation tag
+aws secretsmanager tag-resource \
+  --secret-id my-app-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
+
+# Next update will use transformation
+aws secretsmanager put-secret-value \
+  --secret-id my-app-secret \
+  --secret-string '{"host":"db.us-east-1.amazonaws.com"}'
+
+# Destination will now contain transformed value
+# {"host":"db.us-west-2.amazonaws.com"}
+```
+
+### Binary Secrets
+
+**Note**: Binary secrets are not currently supported and will return HTTP 501. Pass-through mode does not change this behavior.
+
+```bash
+# Binary secret returns 501 (not implemented)
+aws secretsmanager put-secret-value \
+  --secret-id binary-secret \
+  --secret-binary fileb://certificate.pfx
+
+# Response: statusCode 501, body: "Binary secret replication not implemented"
+```
 
 ---
 

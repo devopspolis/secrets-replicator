@@ -199,121 +199,118 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                          transform_mode=transform_mode_override)
 
         # Parse transformation chain from tag (supports single or comma-separated list)
+        # If no tag is present, perform pass-through replication (no transformation)
         if not transform_secret_name:
-            # Transformation secret is required
-            log_event(logger, 'ERROR', 'No transformation secret specified',
+            log_event(logger, 'INFO', 'No transformation tag - performing pass-through replication',
                      secret_id=secret_event.secret_id,
-                     note='Secret must have SecretsReplicator:TransformSecretName tag')
-            return {
-                'statusCode': 400,
-                'body': 'No transformation secret specified. Secret must have SecretsReplicator:TransformSecretName tag.'
-            }
+                     note='Secret will be replicated without transformation')
+            transformation_chain = []
+        else:
+            # Parse transformation names (supports chains)
+            transform_names = parse_transform_names(transform_secret_name)
 
-        # Parse transformation names (supports chains)
-        transform_names = parse_transform_names(transform_secret_name)
+            if not transform_names:
+                log_event(logger, 'ERROR', 'Empty transformation secret name',
+                         secret_id=secret_event.secret_id)
+                return {
+                    'statusCode': 400,
+                    'body': 'Empty transformation secret name in tag'
+                }
 
-        if not transform_names:
-            log_event(logger, 'ERROR', 'Empty transformation secret name',
-                     secret_id=secret_event.secret_id)
-            return {
-                'statusCode': 400,
-                'body': 'Empty transformation secret name in tag'
-            }
-
-        log_event(logger, 'INFO', 'Transformation chain detected',
-                 secret_id=secret_event.secret_id,
-                 transform_count=len(transform_names),
-                 transforms=transform_names)
-
-        # Load and validate all transformations in the chain
-        transformation_chain = []
-        for i, transform_name in enumerate(transform_names, 1):
-            full_transform_name = f"{config.transformation_secret_prefix}{transform_name}"
-
-            log_event(logger, 'INFO', f'Loading transformation {i}/{len(transform_names)}',
+            log_event(logger, 'INFO', 'Transformation chain detected',
                      secret_id=secret_event.secret_id,
-                     transform_name=transform_name,
-                     full_name=full_transform_name)
+                     transform_count=len(transform_names),
+                     transforms=transform_names)
 
-            try:
-                transformation_secret_value = source_client.get_secret(full_transform_name)
+            # Load and validate all transformations in the chain
+            transformation_chain = []
+            for i, transform_name in enumerate(transform_names, 1):
+                full_transform_name = f"{config.transformation_secret_prefix}{transform_name}"
 
-                if transformation_secret_value.secret_binary:
-                    raise InvalidRequestError(
-                        f'Transformation secret {transform_name} is binary (must be text)'
-                    )
-
-                transform_content = transformation_secret_value.secret_string
-
-                # Auto-detect or use configured transform mode
-                if config.transform_mode == 'auto':
-                    detected_mode = detect_transform_type(transform_content)
-                    log_event(logger, 'INFO', 'Transform type auto-detected',
-                             transform_name=transform_name,
-                             detected_type=detected_mode)
-                else:
-                    # Use configured mode (sed or json)
-                    detected_mode = config.transform_mode
-                    log_event(logger, 'INFO', 'Using configured transform type',
-                             transform_name=transform_name,
-                             transform_type=detected_mode)
-
-                # Parse transformation rules
-                if detected_mode == 'sed':
-                    transform_rules = parse_sedfile(transform_content)
-                else:  # json
-                    transform_rules = parse_json_mapping(transform_content)
-
-                transformation_chain.append({
-                    'name': transform_name,
-                    'mode': detected_mode,
-                    'content': transform_content,
-                    'rules': transform_rules,
-                    'rules_count': len(transform_rules)
-                })
-
-                log_event(logger, 'INFO', f'Transformation {i}/{len(transform_names)} loaded successfully',
+                log_event(logger, 'INFO', f'Loading transformation {i}/{len(transform_names)}',
+                         secret_id=secret_event.secret_id,
                          transform_name=transform_name,
-                         mode=detected_mode,
-                         rules_count=len(transform_rules),
-                         size_bytes=len(transform_content))
+                         full_name=full_transform_name)
 
-            except SecretNotFoundError as e:
-                log_error(logger, e, context={'stage': 'transformation_secret_load',
-                                             'transform_name': transform_name,
-                                             'chain_position': f'{i}/{len(transform_names)}'})
-                return {
-                    'statusCode': 404,
-                    'body': f'Transformation secret not found: {transform_name} (position {i}/{len(transform_names)})'
-                }
-            except AccessDeniedError as e:
-                log_error(logger, e, context={'stage': 'transformation_secret_load',
-                                             'transform_name': transform_name,
-                                             'chain_position': f'{i}/{len(transform_names)}'})
-                return {
-                    'statusCode': 403,
-                    'body': f'Access denied to transformation secret: {transform_name} (position {i}/{len(transform_names)})'
-                }
-            except TransformationError as e:
-                log_error(logger, e, context={'stage': 'rule_parsing',
-                                             'transform_name': transform_name,
-                                             'chain_position': f'{i}/{len(transform_names)}'})
-                return {
-                    'statusCode': 500,
-                    'body': f'Rule parsing error in {transform_name}: {e}'
-                }
-            except (ThrottlingError, AWSClientError) as e:
-                log_error(logger, e, context={'stage': 'transformation_secret_load',
-                                             'transform_name': transform_name,
-                                             'chain_position': f'{i}/{len(transform_names)}'})
-                return {
-                    'statusCode': 500,
-                    'body': f'Error loading transformation secret {transform_name}: {e}'
-                }
+                try:
+                    transformation_secret_value = source_client.get_secret(full_transform_name)
 
-        log_event(logger, 'INFO', 'All transformations in chain loaded successfully',
-                 secret_id=secret_event.secret_id,
-                 chain_length=len(transformation_chain))
+                    if transformation_secret_value.secret_binary:
+                        raise InvalidRequestError(
+                            f'Transformation secret {transform_name} is binary (must be text)'
+                        )
+
+                    transform_content = transformation_secret_value.secret_string
+
+                    # Auto-detect or use configured transform mode
+                    if config.transform_mode == 'auto':
+                        detected_mode = detect_transform_type(transform_content)
+                        log_event(logger, 'INFO', 'Transform type auto-detected',
+                                 transform_name=transform_name,
+                                 detected_type=detected_mode)
+                    else:
+                        # Use configured mode (sed or json)
+                        detected_mode = config.transform_mode
+                        log_event(logger, 'INFO', 'Using configured transform type',
+                                 transform_name=transform_name,
+                                 transform_type=detected_mode)
+
+                    # Parse transformation rules
+                    if detected_mode == 'sed':
+                        transform_rules = parse_sedfile(transform_content)
+                    else:  # json
+                        transform_rules = parse_json_mapping(transform_content)
+
+                    transformation_chain.append({
+                        'name': transform_name,
+                        'mode': detected_mode,
+                        'content': transform_content,
+                        'rules': transform_rules,
+                        'rules_count': len(transform_rules)
+                    })
+
+                    log_event(logger, 'INFO', f'Transformation {i}/{len(transform_names)} loaded successfully',
+                             transform_name=transform_name,
+                             mode=detected_mode,
+                             rules_count=len(transform_rules),
+                             size_bytes=len(transform_content))
+
+                except SecretNotFoundError as e:
+                    log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                                 'transform_name': transform_name,
+                                                 'chain_position': f'{i}/{len(transform_names)}'})
+                    return {
+                        'statusCode': 404,
+                        'body': f'Transformation secret not found: {transform_name} (position {i}/{len(transform_names)})'
+                    }
+                except AccessDeniedError as e:
+                    log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                                 'transform_name': transform_name,
+                                                 'chain_position': f'{i}/{len(transform_names)}'})
+                    return {
+                        'statusCode': 403,
+                        'body': f'Access denied to transformation secret: {transform_name} (position {i}/{len(transform_names)})'
+                    }
+                except TransformationError as e:
+                    log_error(logger, e, context={'stage': 'rule_parsing',
+                                                 'transform_name': transform_name,
+                                                 'chain_position': f'{i}/{len(transform_names)}'})
+                    return {
+                        'statusCode': 500,
+                        'body': f'Rule parsing error in {transform_name}: {e}'
+                    }
+                except (ThrottlingError, AWSClientError) as e:
+                    log_error(logger, e, context={'stage': 'transformation_secret_load',
+                                                 'transform_name': transform_name,
+                                                 'chain_position': f'{i}/{len(transform_names)}'})
+                    return {
+                        'statusCode': 500,
+                        'body': f'Error loading transformation secret {transform_name}: {e}'
+                    }
+
+            log_event(logger, 'INFO', 'All transformations in chain loaded successfully',
+                     secret_id=secret_event.secret_id,
+                     chain_length=len(transformation_chain))
 
         # Retrieve source secret
         try:
@@ -383,20 +380,32 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                 output_size = len(transformed_value)
 
+                # Log transformation (handle pass-through case)
+                if len(transformation_chain) == 0:
+                    mode_str = 'passthrough'
+                elif len(transformation_chain) > 1:
+                    mode_str = 'chain'
+                else:
+                    mode_str = transformation_chain[0]['mode']
+
                 log_transformation(
                     logger,
-                    mode='chain' if len(transformation_chain) > 1 else transformation_chain[0]['mode'],
+                    mode=mode_str,
                     rules_count=total_rules_count,
                     input_size=input_size,
                     output_size=output_size,
                     duration_ms=total_transform_duration
                 )
 
-                log_event(logger, 'INFO', 'Transformation chain completed',
-                         chain_length=len(transformation_chain),
-                         total_duration_ms=total_transform_duration,
-                         total_rules=total_rules_count,
-                         size_change=f'{input_size} → {output_size} bytes')
+                if len(transformation_chain) > 0:
+                    log_event(logger, 'INFO', 'Transformation chain completed',
+                             chain_length=len(transformation_chain),
+                             total_duration_ms=total_transform_duration,
+                             total_rules=total_rules_count,
+                             size_change=f'{input_size} → {output_size} bytes')
+                else:
+                    log_event(logger, 'INFO', 'Pass-through replication (no transformation)',
+                             secret_size=output_size)
 
         except SecretNotFoundError as e:
             log_error(logger, e, context={'stage': 'source_retrieval',
@@ -490,6 +499,14 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 secret_size_bytes=len(transformed_value) if not is_binary else None
             )
 
+            # Determine transform mode for response
+            if len(transformation_chain) == 0:
+                transform_mode_response = 'passthrough'
+            elif len(transformation_chain) == 1:
+                transform_mode_response = config.transform_mode
+            else:
+                transform_mode_response = 'chain'
+
             return {
                 'statusCode': 200,
                 'body': 'Secret replicated successfully',
@@ -499,7 +516,7 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'destRegion': config.dest_region,
                 'destArn': response['ARN'],
                 'destVersionId': response['VersionId'],
-                'transformMode': config.transform_mode if len(transformation_chain) == 1 else 'chain',
+                'transformMode': transform_mode_response,
                 'rulesCount': total_rules_count,
                 'transformChainLength': len(transformation_chain),
                 'durationMs': round(duration_ms, 2)

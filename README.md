@@ -68,6 +68,7 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 - ✅ **Cross-Region**: Replicate to any AWS region with region-specific transformations
 - ✅ **Cross-Account**: Replicate to different AWS accounts with proper IAM controls and External ID
 - ✅ **Value Transformation**:
+  - Pass-through mode (no transformation - simple copy)
   - Sed-style regex replacements (e.g., `s/dev/prod/g`)
   - JSON field mappings with JSONPath
   - Region swapping (all AWS services)
@@ -210,12 +211,15 @@ cd secrets-replicator
 sam build
 sam deploy --guided
 
-# 3. Create transformation secret:
+# That's it! Secrets will now be replicated as-is (pass-through mode).
+# For transformations, continue with steps 3-4 below:
+
+# 3. (Optional) Create transformation secret:
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/region-swap \
   --secret-string 's/us-east-1/us-west-2/g'
 
-# 4. Tag source secret to use transformation:
+# 4. (Optional) Tag source secret to use transformation:
 aws secretsmanager tag-resource \
   --secret-id my-source-secret \
   --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
@@ -550,6 +554,60 @@ DEST_REGION=us-west-2
 ---
 
 ## Transformations
+
+Secrets Replicator supports two replication modes:
+
+1. **Pass-Through Replication** - Simple copy without transformation
+2. **Transformation Replication** - Apply sed or JSON transformations during replication
+
+### Pass-Through Replication
+
+If no transformation tag is present on the source secret, Secrets Replicator will perform a **pass-through replication** - copying the secret value exactly as-is to the destination without any modifications.
+
+**When to use pass-through**:
+- ✅ Simple disaster recovery (identical copies across regions)
+- ✅ Secret backup to another region
+- ✅ Cross-account secret sharing (no transformation needed)
+- ✅ Testing replication setup before adding transformations
+
+**Setup**:
+
+```bash
+# No transformation secret needed!
+# Simply deploy Secrets Replicator and it will automatically replicate
+# any secrets WITHOUT the SecretsReplicator:TransformSecretName tag
+
+# Example: Deploy Lambda with destination region
+sam deploy --parameter-overrides DestinationRegion=us-west-2
+
+# Update source secret - it will be replicated as-is
+aws secretsmanager put-secret-value \
+  --secret-id my-secret \
+  --secret-string '{"username":"admin","password":"secret123"}'
+
+# Verify destination (after 2-5 seconds)
+aws secretsmanager get-secret-value \
+  --secret-id my-secret \
+  --region us-west-2 \
+  --query SecretString \
+  --output text
+
+# Output: {"username":"admin","password":"secret123"}  (exact copy)
+```
+
+**Response**:
+```json
+{
+  "statusCode": 200,
+  "transformMode": "passthrough",
+  "rulesCount": 0,
+  "transformChainLength": 0,
+  "sourceRegion": "us-east-1",
+  "destRegion": "us-west-2"
+}
+```
+
+**Note**: To enable transformations later, simply add the `SecretsReplicator:TransformSecretName` tag to the source secret.
 
 ### Transformation Secrets
 
