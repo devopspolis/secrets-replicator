@@ -85,6 +85,24 @@ jobs:
               --versioning-configuration Status=Enabled
           fi
 
+          # Set bucket policy for SAR access
+          echo "Setting bucket policy for SAR access..."
+          aws s3api put-bucket-policy \
+            --bucket "${BUCKET_NAME}" \
+            --policy "{
+              \"Version\": \"2012-10-17\",
+              \"Statement\": [
+                {
+                  \"Effect\": \"Allow\",
+                  \"Principal\": {
+                    \"Service\": \"serverlessrepo.amazonaws.com\"
+                  },
+                  \"Action\": \"s3:GetObject\",
+                  \"Resource\": \"arn:aws:s3:::${BUCKET_NAME}/*\"
+                }
+              ]
+            }"
+
           # Package application
           sam package \
             --template-file .aws-sam/build/template.yaml \

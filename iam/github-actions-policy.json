@@ -29,7 +29,9 @@
         "s3:GetBucketLocation",
         "s3:PutBucketTagging",
         "s3:GetEncryptionConfiguration",
-        "s3:PutEncryptionConfiguration"
+        "s3:PutEncryptionConfiguration",
+        "s3:GetBucketPolicy",
+        "s3:PutBucketPolicy"
       ],
       "Resource": [
         "arn:aws:s3:::secrets-replicator-sar-test-*",
