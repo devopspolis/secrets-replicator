@@ -18,6 +18,7 @@ Metadata:
     SemanticVersion: 0.1.0
     SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
     Labels:
+      - secrets
       - secrets-manager
       - replication
       - cross-region
@@ -26,7 +27,6 @@ Metadata:
       - transformation
       - lambda
       - eventbridge
-      - kms
       - security
 
 Globals:
