@@ -73,7 +73,8 @@
       ],
       "Resource": [
         "arn:aws:cloudformation:*:965862100780:stack/secrets-replicator-sar-test-*/*",
-        "arn:aws:cloudformation:*:965862100780:stack/aws-sam-cli-managed-default*/*"
+        "arn:aws:cloudformation:*:965862100780:stack/aws-sam-cli-managed-default*/*",
+        "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"
       ]
     },
     {
