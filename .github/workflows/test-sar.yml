@@ -127,6 +127,7 @@ jobs:
 
           STACK_NAME="secrets-replicator-sar-test-${{ github.run_id }}"
 
+          # Deploy with parameter overrides (omit DestinationSecretName to use default)
           sam deploy \
             --stack-name "${STACK_NAME}" \
             --capabilities CAPABILITY_IAM \
@@ -135,7 +136,6 @@ jobs:
             --parameter-overrides \
               SourceSecretPattern="arn:aws:secretsmanager:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:secret:sar-test-${{ github.run_id }}-source*" \
               DestinationRegion=us-east-1 \
-              DestinationSecretName="" \
               TransformationSecretPrefix="secrets-replicator/transformations/" \
               TransformMode=auto \
               LogLevel=DEBUG \

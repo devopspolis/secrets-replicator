@@ -214,7 +214,7 @@ aws iam attach-role-policy \
 
 ### Check Environment Variables
 
-1. Go to your GitHub repository: https://github.com/devopspolis/secrets-replicator
+1. Go to your GitHub repository: <https://github.com/devopspolis/secrets-replicator>
 2. Navigate to: **Settings** → **Environments** → **production**
 3. Verify these variables exist:
    - `AWS_ACCOUNT_ID`: `965862100780`
@@ -244,7 +244,7 @@ git push origin main
 
 ### Via GitHub UI (Recommended)
 
-1. Go to your repository: https://github.com/devopspolis/secrets-replicator
+1. Go to your repository: <https://github.com/devopspolis/secrets-replicator>
 2. Click the **Actions** tab
 3. Click **Test SAR Deployment** (left sidebar)
 4. Click **Run workflow** (right side)
@@ -315,19 +315,22 @@ After the workflow completes:
 ### Verify in AWS Console
 
 **Secrets Manager:**
-1. Go to: https://console.aws.amazon.com/secretsmanager/
+
+1. Go to: <https://console.aws.amazon.com/secretsmanager/>
 2. Region: us-west-2
 3. Look for: `sar-test-{run_id}-source`
 4. Should be DELETED if cleanup=true
 
 **Serverless Application Repository:**
-1. Go to: https://console.aws.amazon.com/serverlessrepo/
+
+1. Go to: <https://console.aws.amazon.com/serverlessrepo/>
 2. Click "My Applications"
 3. Look for: `secrets-replicator`
 4. Status: PRIVATE (not public yet)
 
 **CloudFormation:**
-1. Go to: https://console.aws.amazon.com/cloudformation/
+
+1. Go to: <https://console.aws.amazon.com/cloudformation/>
 2. Look for: `secrets-replicator-sar-test-{run_id}`
 3. Should be DELETED if cleanup=true
 
@@ -404,13 +407,13 @@ aws secretsmanager delete-secret \
 
 ### Per Workflow Run (with cleanup=true)
 
-| Resource | Duration | Cost |
-|----------|----------|------|
-| Secrets Manager (2 secrets) | ~10 minutes | $0.01 |
-| Lambda executions | 1-2 invocations | $0.001 |
-| S3 storage | Persistent | $0.02/month |
-| CloudWatch Logs | ~50MB | $0.03 |
-| **Total per run** | | **~$0.05** |
+| Resource                    | Duration        | Cost        |
+|-----------------------------|-----------------|-------------|
+| Secrets Manager (2 secrets) | ~10 minutes     | $0.01       |
+| Lambda executions           | 1-2 invocations | $0.001      |
+| S3 storage                  | Persistent      | $0.02/month |
+| CloudWatch Logs             | ~50MB           | $0.03       |
+| **Total per run**           |                 | **~$0.05**  |
 
 ### Monthly Cost (if running weekly)
 
