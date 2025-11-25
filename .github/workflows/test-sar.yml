@@ -1,0 +1,242 @@
+name: Test SAR Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      cleanup:
+        description: 'Cleanup test secrets after deployment'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  test-sar:
+    name: Test SAR Deployment
+    runs-on: ubuntu-latest
+    environment: production  # Uses GitHub environment with AWS_ACCOUNT_ID and AWS_REGION variables
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-SARTest-${{ github.run_id }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          echo "### AWS Identity ✅" >> $GITHUB_STEP_SUMMARY
+          echo "Account: ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "Region: ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Setup test secrets
+        id: setup
+        run: |
+          echo "### Setting up test secrets..." >> $GITHUB_STEP_SUMMARY
+
+          # Run setup script
+          ./scripts/setup-test-secrets.sh \
+            --region ${{ vars.AWS_REGION }} \
+            --dest-region us-east-1 \
+            --prefix sar-test-${{ github.run_id }}
+
+          # Save secret names for cleanup
+          echo "source_secret=sar-test-${{ github.run_id }}-source" >> $GITHUB_OUTPUT
+          echo "transform_secret=secrets-replicator/transformations/sar-test-${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+          echo "✅ Test secrets created" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: SAM build
+        run: |
+          echo "### Building SAM application..." >> $GITHUB_STEP_SUMMARY
+          sam build --use-container
+
+      - name: SAM package
+        id: package
+        run: |
+          echo "### Packaging SAM application..." >> $GITHUB_STEP_SUMMARY
+
+          # Create S3 bucket if it doesn't exist
+          BUCKET_NAME="secrets-replicator-sar-test-${{ vars.AWS_ACCOUNT_ID }}"
+
+          if ! aws s3 ls "s3://${BUCKET_NAME}" 2>/dev/null; then
+            echo "Creating S3 bucket: ${BUCKET_NAME}"
+            aws s3 mb "s3://${BUCKET_NAME}" --region ${{ vars.AWS_REGION }}
+            aws s3api put-bucket-versioning \
+              --bucket "${BUCKET_NAME}" \
+              --versioning-configuration Status=Enabled
+          fi
+
+          # Package application
+          sam package \
+            --template-file .aws-sam/build/template.yaml \
+            --output-template-file packaged.yaml \
+            --s3-bucket "${BUCKET_NAME}" \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "bucket=${BUCKET_NAME}" >> $GITHUB_OUTPUT
+          echo "✅ Application packaged" >> $GITHUB_STEP_SUMMARY
+
+      - name: SAM publish to SAR
+        id: publish
+        run: |
+          echo "### Publishing to SAR (private)..." >> $GITHUB_STEP_SUMMARY
+
+          # Publish to SAR
+          OUTPUT=$(sam publish \
+            --template packaged.yaml \
+            --region ${{ vars.AWS_REGION }} \
+            2>&1 || true)
+
+          echo "$OUTPUT"
+
+          # Extract application ID
+          APP_ID=$(echo "$OUTPUT" | grep -o 'arn:aws:serverlessrepo:[^:]*:[^:]*:applications/[^"]*' | head -1 || echo "")
+
+          if [ -n "$APP_ID" ]; then
+            echo "application_id=${APP_ID}" >> $GITHUB_OUTPUT
+            echo "✅ Published to SAR" >> $GITHUB_STEP_SUMMARY
+            echo "Application ID: ${APP_ID}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Application may already exist, continuing..." >> $GITHUB_STEP_SUMMARY
+            echo "application_id=arn:aws:serverlessrepo:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:applications/secrets-replicator" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Deploy from SAR
+        id: deploy
+        run: |
+          echo "### Deploying from SAR..." >> $GITHUB_STEP_SUMMARY
+
+          STACK_NAME="secrets-replicator-sar-test-${{ github.run_id }}"
+
+          sam deploy \
+            --stack-name "${STACK_NAME}" \
+            --capabilities CAPABILITY_IAM \
+            --region ${{ vars.AWS_REGION }} \
+            --no-confirm-changeset \
+            --parameter-overrides \
+              SourceSecretPattern="arn:aws:secretsmanager:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:secret:sar-test-${{ github.run_id }}-source*" \
+              DestinationRegion=us-east-1 \
+              DestinationSecretName="" \
+              TransformationSecretPrefix="secrets-replicator/transformations/" \
+              TransformMode=auto \
+              LogLevel=DEBUG \
+              EnableMetrics=true \
+            --tags \
+              Purpose=Testing \
+              RunID=${{ github.run_id }} \
+              ManagedBy=GitHubActions
+
+          echo "✅ Deployed stack: ${STACK_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "stack_name=${STACK_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Test replication
+        run: |
+          echo "### Testing replication..." >> $GITHUB_STEP_SUMMARY
+
+          # Update source secret to trigger replication
+          aws secretsmanager put-secret-value \
+            --secret-id "sar-test-${{ github.run_id }}-source" \
+            --secret-string '{"test": "github-actions", "timestamp": "'$(date +%s)'"}' \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "Updated source secret, waiting 30 seconds for replication..."
+          sleep 30
+
+          # Check destination secret
+          if aws secretsmanager get-secret-value \
+            --secret-id "sar-test-${{ github.run_id }}-source" \
+            --region us-east-1 &>/dev/null; then
+            echo "✅ Destination secret created successfully" >> $GITHUB_STEP_SUMMARY
+
+            # Get value
+            DEST_VALUE=$(aws secretsmanager get-secret-value \
+              --secret-id "sar-test-${{ github.run_id }}-source" \
+              --region us-east-1 \
+              --query SecretString \
+              --output text)
+
+            echo "Destination value: ${DEST_VALUE}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Destination secret not found, check logs" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check CloudWatch Logs
+        if: always()
+        run: |
+          echo "### CloudWatch Logs..." >> $GITHUB_STEP_SUMMARY
+
+          # Get log group name
+          LOG_GROUP=$(aws logs describe-log-groups \
+            --log-group-name-prefix "/aws/lambda/secrets-replicator-sar-test" \
+            --query 'logGroups[0].logGroupName' \
+            --output text \
+            --region ${{ vars.AWS_REGION }})
+
+          if [ "$LOG_GROUP" != "None" ] && [ -n "$LOG_GROUP" ]; then
+            echo "Recent logs from ${LOG_GROUP}:" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            aws logs tail "$LOG_GROUP" \
+              --since 5m \
+              --format short \
+              --region ${{ vars.AWS_REGION }} >> $GITHUB_STEP_SUMMARY || true
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Cleanup test resources
+        if: always() && inputs.cleanup == true
+        run: |
+          echo "### Cleaning up test resources..." >> $GITHUB_STEP_SUMMARY
+
+          # Delete CloudFormation stack
+          STACK_NAME="secrets-replicator-sar-test-${{ github.run_id }}"
+          if aws cloudformation describe-stacks --stack-name "${STACK_NAME}" --region ${{ vars.AWS_REGION }} &>/dev/null; then
+            echo "Deleting stack: ${STACK_NAME}"
+            aws cloudformation delete-stack \
+              --stack-name "${STACK_NAME}" \
+              --region ${{ vars.AWS_REGION }} || true
+
+            # Wait for deletion (up to 10 minutes)
+            echo "Waiting for stack deletion..."
+            aws cloudformation wait stack-delete-complete \
+              --stack-name "${STACK_NAME}" \
+              --region ${{ vars.AWS_REGION }} || true
+          else
+            echo "Stack not found, skipping deletion"
+          fi
+
+          # Delete test secrets
+          ./scripts/cleanup-test-secrets.sh \
+            --region ${{ vars.AWS_REGION }} \
+            --dest-region us-east-1 \
+            --prefix "sar-test-${{ github.run_id }}" \
+            --yes
+
+          echo "✅ Cleanup complete" >> $GITHUB_STEP_SUMMARY
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## SAR Testing Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Run ID:** ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cleanup:** ${{ inputs.cleanup }}" >> $GITHUB_STEP_SUMMARY

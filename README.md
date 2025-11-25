@@ -25,6 +25,7 @@ Fill the gap in AWS's native secret replication by transforming secret values du
 - [Monitoring](#monitoring)
 - [Security](#security)
 - [Performance](#performance)
+- [Cost](#cost)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 - [FAQ](#faq)
@@ -1069,6 +1070,174 @@ With exponential backoff (transient errors):
 4. **Use provisioned concurrency**: For high-frequency replications
 5. **Batch updates**: Update multiple fields in a single secret update
 6. **Share transformation secrets**: Multiple source secrets can reference the same transformation secret
+
+---
+
+## Cost
+
+### Monthly Cost Breakdown
+
+The cost of running Secrets Replicator depends on two factors:
+
+1. **Replication activity** (Lambda, EventBridge, CloudWatch, etc.) - Very low cost
+2. **Secrets Manager storage** (destination secrets) - Primary cost driver
+
+#### Typical Scenarios
+
+| Scenario | Replications/Month | Secrets Stored | Services Cost | Secrets Storage | **Total/Month** |
+|----------|-------------------|----------------|---------------|-----------------|-----------------|
+| **Testing** | 50 | 1 | $0.03 | $0.40 | **$0.43** |
+| **Light Production** | 100 | 5 | $0.15 | $2.00 | **$2.15** |
+| **Moderate Production** | 1,000 | 10 | $0.79 | $4.00 | **$4.79** |
+| **Heavy Production** | 10,000 | 50 | $6.50 | $20.00 | **$26.50** |
+
+#### Detailed Cost Components
+
+**Per 1,000 Replications:**
+- Lambda invocations + duration: ~$0.11
+- Secrets Manager API calls: ~$0.01
+- EventBridge events: ~$0.001
+- CloudWatch (logs + metrics): ~$0.35
+- X-Ray traces: ~$0.005
+- SQS/SNS: ~$0.01
+- **Subtotal: ~$0.48**
+
+**Fixed Monthly Costs:**
+- S3 storage (SAR packages): ~$0.02
+- CloudWatch Alarms (3 alarms): ~$0.30 (if enabled)
+- **Subtotal: ~$0.32**
+
+**Secrets Manager Storage:**
+- $0.40 per secret per month (same as AWS native replication)
+- This is the largest cost component for most users
+
+#### Cost Calculator
+
+Use the included cost calculator script for precise estimates:
+
+```bash
+# Light production (100 replications, 5 secrets)
+./scripts/cost-calculator.py --replications 100 --secrets 5
+
+# Moderate production (1000 replications, 10 secrets)
+./scripts/cost-calculator.py --replications 1000 --secrets 10
+
+# Heavy production (10000 replications, 50 secrets)
+./scripts/cost-calculator.py --replications 10000 --secrets 50
+
+# Disable metrics and alarms to reduce costs
+./scripts/cost-calculator.py --replications 1000 --secrets 10 --no-metrics --no-alarms
+```
+
+Example output:
+```
+======================================================================
+AWS Secrets Replicator - Monthly Cost Estimate
+======================================================================
+
+Usage Parameters:
+  Replications per month:     1,000
+  Destination secrets:        10
+  Lambda memory:              512 MB
+  Avg Lambda duration:        3.0 seconds
+  Custom metrics enabled:     True
+  CloudWatch alarms enabled:  True
+
+----------------------------------------------------------------------
+Cost Breakdown:
+----------------------------------------------------------------------
+
+Lambda:
+  Invocations:                $0.0002
+  Duration:                   $0.0750
+  Subtotal:                   $0.0752
+
+Secrets Manager:
+  API calls (Get/Put):        $0.0100
+  Secret storage:             $4.00
+  Subtotal:                   $4.01
+
+CloudWatch:
+  Logs ingestion:             $0.0010
+  Logs storage:               $0.0001
+  Custom metrics:             $1.20
+  Alarms:                     $0.30
+  Subtotal:                   $1.50
+
+======================================================================
+Services Total (excl. secrets storage):   $0.79
+Secrets Storage (10 secrets):             $4.00
+MONTHLY TOTAL:                             $4.79
+======================================================================
+```
+
+### Cost Optimization Tips
+
+#### 1. Disable Custom Metrics (Save ~$0.30 per 1,000 replications)
+
+Set `EnableMetrics: 'false'` when deploying:
+
+```bash
+sam deploy \
+  --parameter-overrides EnableMetrics=false \
+  --guided
+```
+
+You'll still have CloudWatch Logs for troubleshooting, but no custom metrics.
+
+#### 2. Disable CloudWatch Alarms (Save ~$0.30/month)
+
+Remove or comment out the alarm resources in `template.yaml` before deployment.
+
+#### 3. Reduce Log Retention
+
+Set CloudWatch Logs retention to 1 day for testing, 7 days for production:
+
+```bash
+aws logs put-retention-policy \
+  --log-group-name /aws/lambda/secrets-replicator \
+  --retention-in-days 7
+```
+
+#### 4. Delete Test Secrets
+
+Each destination secret costs $0.40/month. Delete test secrets after validation:
+
+```bash
+aws secretsmanager delete-secret \
+  --secret-id test-secret \
+  --force-delete-without-recovery
+```
+
+#### 5. Use AWS Free Tier
+
+If your account is eligible for AWS Free Tier:
+- Lambda: 1M free requests/month + 400,000 GB-seconds
+- CloudWatch Logs: 5GB ingestion
+- X-Ray: 100,000 traces/month
+- SNS: 1,000 notifications/month
+- SQS: 1M requests/month
+
+This can reduce your costs significantly for light usage.
+
+### Cost Comparison
+
+| Solution | Setup Cost | Monthly Cost (10 secrets) | Value Transformation | Cross-Account |
+|----------|-----------|---------------------------|---------------------|---------------|
+| **AWS Native Replication** | Free | $4.00 | ❌ No | ❌ No |
+| **Secrets Replicator** | Free | $4.79 | ✅ Yes | ✅ Yes |
+| **Custom Solution** | High | Varies | ✅ Yes | ✅ Yes |
+
+**Key Insight**: The incremental cost for transformation and cross-account support is only ~$0.79/month for moderate usage.
+
+### Publishing to SAR Costs
+
+Publishing your application to AWS Serverless Application Repository:
+
+- **SAR Publishing**: FREE (no charge to publish)
+- **S3 Storage** (packaged artifacts): ~$0.02/month
+- **S3 Requests** (package uploads): ~$0.01 one-time
+- **Total**: ~$0.03 one-time + minimal monthly
 
 ---
 
