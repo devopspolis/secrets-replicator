@@ -132,6 +132,7 @@ jobs:
             --stack-name "${STACK_NAME}" \
             --capabilities CAPABILITY_IAM \
             --region ${{ vars.AWS_REGION }} \
+            --resolve-s3 \
             --no-confirm-changeset \
             --parameter-overrides \
               SourceSecretPattern="arn:aws:secretsmanager:${{ vars.AWS_REGION }}:${{ vars.AWS_ACCOUNT_ID }}:secret:sar-test-${{ github.run_id }}-source*" \
