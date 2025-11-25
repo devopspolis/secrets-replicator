@@ -19,18 +19,15 @@ Metadata:
     SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
     Labels:
       - secrets-manager
-      - secrets
       - replication
       - cross-region
       - cross-account
       - disaster-recovery
-      - security
+      - transformation
       - lambda
       - eventbridge
       - kms
-      - transformation
-      - sed
-      - json
+      - security
 
 Globals:
   Function:
