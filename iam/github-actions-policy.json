@@ -1,0 +1,193 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "SecretsManagerAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:CreateSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:TagResource",
+        "secretsmanager:ListSecrets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "S3Access",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:PutBucketVersioning",
+        "s3:DeleteObject",
+        "s3:PutBucketPublicAccessBlock"
+      ],
+      "Resource": [
+        "arn:aws:s3:::secrets-replicator-sar-test-*",
+        "arn:aws:s3:::secrets-replicator-sar-test-*/*"
+      ]
+    },
+    {
+      "Sid": "ServerlessRepoAccess",
+      "Effect": "Allow",
+      "Action": [
+        "serverlessrepo:CreateApplication",
+        "serverlessrepo:CreateApplicationVersion",
+        "serverlessrepo:UpdateApplication",
+        "serverlessrepo:GetApplication",
+        "serverlessrepo:ListApplications",
+        "serverlessrepo:DeleteApplication",
+        "serverlessrepo:GetApplicationPolicy",
+        "serverlessrepo:PutApplicationPolicy"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudFormationAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateStack",
+        "cloudformation:UpdateStack",
+        "cloudformation:DeleteStack",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:ValidateTemplate",
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:ListStacks"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:965862100780:stack/secrets-replicator-sar-test-*/*",
+        "arn:aws:cloudformation:*:965862100780:stack/aws-sam-cli-managed-default*/*"
+      ]
+    },
+    {
+      "Sid": "LambdaAccess",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetFunction",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:ListTags",
+        "lambda:TagResource",
+        "lambda:PublishVersion",
+        "lambda:CreateAlias"
+      ],
+      "Resource": "arn:aws:lambda:*:965862100780:function:secrets-replicator-*"
+    },
+    {
+      "Sid": "IAMAccess",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:PassRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:GetRolePolicy",
+        "iam:TagRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::965862100780:role/secrets-replicator-*",
+        "arn:aws:iam::965862100780:role/aws-sam-cli-managed-default-*"
+      ]
+    },
+    {
+      "Sid": "EventBridgeAccess",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule",
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:EnableRule",
+        "events:DisableRule",
+        "events:TagResource"
+      ],
+      "Resource": "arn:aws:events:*:965862100780:rule/secrets-replicator-*"
+    },
+    {
+      "Sid": "CloudWatchLogsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:TagResource"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:965862100780:log-group:/aws/lambda/secrets-replicator-*",
+        "arn:aws:logs:*:965862100780:log-group::log-stream:*"
+      ]
+    },
+    {
+      "Sid": "SQSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": "arn:aws:sqs:*:965862100780:secrets-replicator-*"
+    },
+    {
+      "Sid": "SNSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:TagResource"
+      ],
+      "Resource": "arn:aws:sns:*:965862100780:secrets-replicator-*"
+    },
+    {
+      "Sid": "CloudWatchMetricsAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:PutMetricData"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "STSAccess",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
