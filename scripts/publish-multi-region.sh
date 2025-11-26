@@ -5,6 +5,14 @@ set -e
 # Usage: ./scripts/publish-multi-region.sh [regions...] [--no-container]
 # Example: ./scripts/publish-multi-region.sh us-east-1 us-west-2 eu-west-1
 # Example: ./scripts/publish-multi-region.sh us-east-1 --no-container
+#
+# Prerequisites:
+# - PyYAML: pip3 install --user pyyaml
+# - S3 buckets: secrets-replicator-sar-<region> (created automatically)
+# - Files in bucket: LICENSE and README.md must be uploaded separately
+#
+# Note: S3 bucket naming changed from secrets-replicator-sar-ACCOUNT_ID-REGION
+#       to secrets-replicator-sar-REGION for simplicity
 
 # Parse arguments
 USE_CONTAINER=true
@@ -50,7 +58,8 @@ for REGION in $REGIONS; do
   echo "Publishing to ${REGION}..."
   echo "=========================================="
 
-  BUCKET_NAME="${BUCKET_PREFIX}-${ACCOUNT_ID}-${REGION}"
+  #BUCKET_NAME="${BUCKET_PREFIX}-${ACCOUNT_ID}-${REGION}"
+  BUCKET_NAME="${BUCKET_PREFIX}-${REGION}"
 
   # Create S3 bucket if it doesn't exist
   if ! aws s3 ls "s3://${BUCKET_NAME}" --region ${REGION} 2>/dev/null; then
@@ -164,7 +173,7 @@ for REGION in $REGIONS; do
   echo "   # ${REGION}"
   echo "   aws serverlessrepo put-application-policy \\"
   echo "     --application-id arn:aws:serverlessrepo:${REGION}:${ACCOUNT_ID}:applications/secrets-replicator \\"
-  echo "     --statements Principals='ACCOUNT_ID_1,ACCOUNT_ID_2',Actions=Deploy \\"
+  echo "     --statements Principals='211125650454,905418247177,340671811473,202533525047,381491855141,767397962497,851725215806,179907032632',Actions=Deploy \\"
   echo "     --region ${REGION}"
   echo ""
 done
