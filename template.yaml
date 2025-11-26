@@ -15,7 +15,7 @@ Metadata:
     LicenseUrl: LICENSE
     ReadmeUrl: README.md
     HomePageUrl: https://github.com/devopspolis/secrets-replicator
-    SemanticVersion: 0.1.0
+    SemanticVersion: 0.1.1
     SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
     Labels:
       - secrets
