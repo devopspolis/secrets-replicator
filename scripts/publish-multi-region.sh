@@ -98,6 +98,7 @@ for REGION in $REGIONS; do
 
   OUTPUT=$(sam publish \
     --template .aws-sam/build/template.yaml \
+    --s3-bucket "${BUCKET_NAME}" \
     --region ${REGION} \
     2>&1 || true)
 
