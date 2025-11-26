@@ -2,11 +2,29 @@
 set -e
 
 # Multi-region SAR publishing script
-# Usage: ./scripts/publish-multi-region.sh [regions...]
+# Usage: ./scripts/publish-multi-region.sh [regions...] [--no-container]
 # Example: ./scripts/publish-multi-region.sh us-east-1 us-west-2 eu-west-1
+# Example: ./scripts/publish-multi-region.sh us-east-1 --no-container
+
+# Parse arguments
+USE_CONTAINER=true
+REGION_ARGS=()
+
+for arg in "$@"; do
+  if [ "$arg" = "--no-container" ]; then
+    USE_CONTAINER=false
+  else
+    REGION_ARGS+=("$arg")
+  fi
+done
 
 # Default regions if none specified
-REGIONS="${@:-us-west-2 us-east-1}"
+if [ ${#REGION_ARGS[@]} -eq 0 ]; then
+  REGIONS="us-west-2 us-east-1"
+else
+  REGIONS="${REGION_ARGS[@]}"
+fi
+
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 BUCKET_PREFIX="secrets-replicator-sar"
 
@@ -15,11 +33,16 @@ echo "Multi-Region SAR Publishing"
 echo "=========================================="
 echo "Account ID: ${ACCOUNT_ID}"
 echo "Regions: ${REGIONS}"
+echo "Use Container: ${USE_CONTAINER}"
 echo ""
 
 # Build once (reuse for all regions)
 echo "Building SAM application..."
-sam build --use-container
+if [ "$USE_CONTAINER" = true ]; then
+  sam build --use-container
+else
+  sam build
+fi
 
 for REGION in $REGIONS; do
   echo ""
