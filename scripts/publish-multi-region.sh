@@ -92,13 +92,43 @@ for REGION in $REGIONS; do
     }" \
     --region ${REGION}
 
-  # Publish to SAR (sam publish handles packaging internally)
+  # Package first (uploads Lambda code to S3)
+  echo "Packaging application for ${REGION}..."
+  sam package \
+    --template-file .aws-sam/build/template.yaml \
+    --output-template-file "packaged-${REGION}.yaml" \
+    --s3-bucket "${BUCKET_NAME}" \
+    --region ${REGION}
+
+  # Restore SAR metadata (sam package strips it)
+  echo "Restoring SAR metadata to packaged template..."
+  python3 -c "
+import yaml
+import sys
+
+# Read original template
+with open('template.yaml', 'r') as f:
+    original = yaml.safe_load(f)
+
+# Read packaged template
+with open('packaged-${REGION}.yaml', 'r') as f:
+    packaged = yaml.safe_load(f)
+
+# Copy Metadata section
+if 'Metadata' in original:
+    packaged['Metadata'] = original['Metadata']
+
+# Write back
+with open('packaged-${REGION}.yaml', 'w') as f:
+    yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
+"
+
+  # Publish to SAR
   echo "Publishing to SAR in ${REGION}..."
-  echo "Note: sam publish will upload README.md and LICENSE from project root"
+  echo "Note: README.md and LICENSE will be uploaded from project root"
 
   OUTPUT=$(sam publish \
-    --template .aws-sam/build/template.yaml \
-    --s3-bucket "${BUCKET_NAME}" \
+    --template "packaged-${REGION}.yaml" \
     --region ${REGION} \
     2>&1 || true)
 
@@ -114,6 +144,9 @@ for REGION in $REGIONS; do
   else
     echo "⚠️  Publish may have failed or application already exists"
   fi
+
+  # Cleanup packaged template
+  rm -f "packaged-${REGION}.yaml"
 done
 
 echo ""
