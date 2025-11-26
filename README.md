@@ -250,8 +250,6 @@ aws secretsmanager get-secret-value \
 
 ### Option 1: AWS Serverless Application Repository (Recommended)
 
-**Coming soon - Phase 8**
-
 Deploy directly from SAR with one click:
 
 1. Go to [AWS Serverless Application Repository](https://serverlessrepo.aws.amazon.com/)
