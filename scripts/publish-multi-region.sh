@@ -102,7 +102,7 @@ for REGION in $REGIONS; do
 
   # Restore SAR metadata (sam package strips it)
   echo "Restoring SAR metadata to packaged template..."
-  python3 -c "
+  $(which python3) -c "
 import yaml
 import sys
 
@@ -121,7 +121,10 @@ if 'Metadata' in original:
 # Write back
 with open('packaged-${REGION}.yaml', 'w') as f:
     yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
-"
+" || {
+    echo "Error: PyYAML not installed. Please run: pip3 install pyyaml"
+    exit 1
+  }
 
   # Publish to SAR
   echo "Publishing to SAR in ${REGION}..."
