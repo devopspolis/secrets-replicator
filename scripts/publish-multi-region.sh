@@ -92,18 +92,12 @@ for REGION in $REGIONS; do
     }" \
     --region ${REGION}
 
-  # Package
-  echo "Packaging application for ${REGION}..."
-  sam package \
-    --template-file .aws-sam/build/template.yaml \
-    --output-template-file "packaged-${REGION}.yaml" \
-    --s3-bucket "${BUCKET_NAME}" \
-    --region ${REGION}
-
-  # Publish to SAR
+  # Publish to SAR (sam publish handles packaging internally)
   echo "Publishing to SAR in ${REGION}..."
+  echo "Note: sam publish will upload README.md and LICENSE from project root"
+
   OUTPUT=$(sam publish \
-    --template "packaged-${REGION}.yaml" \
+    --template .aws-sam/build/template.yaml \
     --region ${REGION} \
     2>&1 || true)
 
@@ -119,9 +113,6 @@ for REGION in $REGIONS; do
   else
     echo "⚠️  Publish may have failed or application already exists"
   fi
-
-  # Cleanup packaged template
-  rm -f "packaged-${REGION}.yaml"
 done
 
 echo ""
