@@ -1,271 +1,406 @@
-# AWS Serverless Application Repository Publishing Guide
+# SAR Publishing and Deployment Workflows
 
-## Prerequisites
+## Overview
 
-- [x] SAM CLI installed and configured
-- [x] AWS account with SAR publishing permissions
-- [x] S3 bucket for packaged artifacts (in us-east-1)
-- [x] All SAR metadata in template.yaml
-- [x] Comprehensive README.md
-- [x] LICENSE file (MIT)
+This document describes the CI/CD workflows for the secrets-replicator project, following the **"build once, deploy many"** principle to ensure that what you test in QA is exactly what gets deployed to Production and published to SAR.
 
-## Publishing Steps
+## Workflow Architecture
 
-### 1. Create S3 Bucket (if needed)
-
-```bash
-# Create bucket in us-west-2 (primary region for private testing)
-aws s3 mb s3://secrets-replicator-sar-packages --region us-west-2
-
-# Enable versioning (recommended)
-aws s3api put-bucket-versioning \
-  --bucket secrets-replicator-sar-packages \
-  --versioning-configuration Status=Enabled
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    GitHub Release v1.0.0                    │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────────────────────┐
+│               release-qa.yml (Build Once)                   │
+│  1. sam build                                               │
+│  2. sam package → S3 (secrets-replicator-builds-REGION)     │
+│  3. sam deploy → QA Stack                                   │
+│  4. Upload packaged template as GitHub artifact            │
+└─────────────────────┬───────────────────────────────────────┘
+                      │
+                      ▼
+            ┌────────────────────┐
+            │  Test in QA        │
+            └────────┬───────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────┐
+│          release-prod.yml (Deploy Same Package)             │
+│  1. Download packaged template from S3 (NO REBUILD)        │
+│  2. sam deploy → Prod Stack                                │
+│  3. sam publish → SAR (us-east-1, us-west-2)               │
+│  4. Make SAR application public                            │
+└─────────────────────────────────────────────────────────────┘
+                      │
+                      ▼
+            ┌────────────────────┐
+            │  Consumers Deploy  │
+            │  from SAR          │
+            └────────────────────┘
 ```
 
-### 2. Package Application
+## Workflows
 
+### 1. `deploy-dev.yml` - Continuous Deployment to Dev
+
+**Trigger:** Push to `main` branch or manual dispatch
+
+**Purpose:** Fast iteration in development environment
+
+**Process:**
+- Builds and deploys directly to dev stack
+- Uses workflow run number as build identifier
+- No SAR publishing
+- Tags: `Environment=dev`, `BuildNumber=123`, `GitSha=abc123`
+
+**Command:**
 ```bash
-# Build Lambda function
-sam build --use-container
+# Automatic on push to main
+git push origin main
 
-# Package with all artifacts (using us-west-2 for private testing)
-sam package \
-  --template-file .aws-sam/build/template.yaml \
-  --output-template-file packaged.yaml \
-  --s3-bucket secrets-replicator-sar-packages \
-  --region us-west-2
+# Or manual via GitHub CLI
+gh workflow run deploy-dev.yml
 ```
 
-### 3. Publish to SAR (Private by Default)
+### 2. `release-qa.yml` - Build Once and Deploy to QA
 
+**Trigger:** GitHub Release published or manual dispatch
+
+**Purpose:** Create the definitive build artifact for a version
+
+**Process:**
+1. **Build:** `sam build` (only happens once for this version)
+2. **Package:** `sam package` uploads Lambda code to S3
+   - Bucket: `secrets-replicator-builds-REGION`
+   - Path: `releases/VERSION/packaged-qa.yaml`
+3. **Store:** Uploads packaged template as GitHub artifact (90 day retention)
+4. **Deploy:** Deploys to QA stack for testing
+5. **Version:** Extracts semantic version from git tag (strips 'v' prefix)
+
+**Package Storage:**
+- S3: `s3://secrets-replicator-builds-us-west-2/releases/1.0.0/`
+- GitHub Artifacts: `packaged-template-1.0.0`
+
+**Command:**
 ```bash
-# First time publish (PRIVATE - only visible to your account)
-sam publish \
-  --template packaged.yaml \
-  --region us-west-2
-
-# The output will show the application ARN:
-# Created new application with the following metadata:
-# {
-#   "ApplicationId": "arn:aws:serverlessrepo:us-west-2:123456789012:applications/secrets-replicator",
-#   "CreationTime": "...",
-#   "Version": {
-#     "ApplicationId": "arn:aws:serverlessrepo:us-west-2:123456789012:applications/secrets-replicator",
-#     "SemanticVersion": "0.1.0"
-#   }
-# }
-```
-
-**Important**: Your application is **PRIVATE** by default. Only you can see and deploy it until you explicitly make it public.
-
-### 4. Test Private Deployment from SAR
-
-**Option A: SAR Console (Easiest)**
-1. Go to [AWS SAR Console](https://console.aws.amazon.com/serverlessrepo)
-2. Click "Available applications" → "Private applications" tab
-3. Find "secrets-replicator"
-4. Click "Deploy" and test the deployment experience
-
-**Option B: CLI Deployment**
-```bash
-# Deploy from your private SAR application
-sam deploy \
-  --stack-name secrets-replicator-test \
-  --capabilities CAPABILITY_IAM \
-  --region us-west-2 \
-  --guided
-```
-
-**Option C: Share with Specific Test Accounts**
-```bash
-# Grant permission to specific AWS accounts for testing
-aws serverlessrepo put-application-policy \
-  --application-id arn:aws:serverlessrepo:us-west-2:YOUR_ACCOUNT:applications/secrets-replicator \
-  --statements Principals=123456789012,Actions=Deploy \
-  --region us-west-2
-```
-
-### 5. Make Application Public (When Ready)
-
-**Via Console (Recommended)**:
-1. Go to [SAR Console](https://console.aws.amazon.com/serverlessrepo) → "My Applications"
-2. Click "secrets-replicator"
-3. Click "Sharing" tab
-4. Click "Make application public"
-5. Review and confirm
-
-**Via CLI**:
-```bash
-aws serverlessrepo put-application-policy \
-  --application-id arn:aws:serverlessrepo:us-west-2:YOUR_ACCOUNT:applications/secrets-replicator \
-  --statements Principals=*,Actions=Deploy \
-  --region us-west-2
-```
-
-### 6. Publish to Additional Regions (Public Release)
-
-Once thoroughly tested and made public in us-west-2, publish to other regions for wider adoption:
-
-```bash
-# Package for us-east-1 (largest user base)
-sam package \
-  --template-file .aws-sam/build/template.yaml \
-  --output-template-file packaged.yaml \
-  --s3-bucket secrets-replicator-sar-packages-us-east-1 \
-  --region us-east-1
-
-sam publish \
-  --template packaged.yaml \
-  --region us-east-1
-
-# Repeat for other popular regions as needed (eu-west-1, ap-southeast-1, etc.)
-```
-
-### 7. Update Application Version (Future Updates)
-
-```bash
-# Update SemanticVersion in template.yaml (e.g., 0.1.0 → 0.2.0 → 1.0.0)
-# Then rebuild, package, and publish again
-
-sam build --use-container
-sam package \
-  --template-file .aws-sam/build/template.yaml \
-  --output-template-file packaged.yaml \
-  --s3-bucket secrets-replicator-sar-packages \
-  --region us-west-2
-
-sam publish \
-  --template packaged.yaml \
-  --region us-west-2
-
-# If already published to multiple regions, update all:
-sam publish --template packaged.yaml --region us-east-1
-```
-
-**Semantic Versioning Guide**:
-- `0.1.0` - `0.9.x`: Pre-release, testing, breaking changes expected
-- `1.0.0`: First stable public release
-- `1.0.x`: Bug fixes (backward compatible)
-- `1.x.0`: New features (backward compatible)
-- `x.0.0`: Breaking changes
-
-## Publishing Checklist
-
-Before making the application public:
-
-### SAM Template Validation
-- [x] All required SAR metadata fields present
-- [x] SemanticVersion follows SemVer (1.0.0)
-- [x] Description is clear and concise
-- [x] Labels/tags for discoverability
-- [x] LICENSE file exists and referenced
-- [x] README.md comprehensive
-
-### Documentation Review
-- [x] README has quick start guide
-- [x] All parameters documented
-- [x] IAM permissions documented
-- [x] Example configurations provided
-- [x] Troubleshooting guide complete
-
-### Testing
-- [ ] Deploy from SAR succeeds
-- [ ] All examples work as documented
-- [ ] Cross-region replication tested
-- [ ] Cross-account replication tested
-- [ ] Transformation examples tested
-- [ ] CloudWatch metrics publishing
-- [ ] CloudWatch alarms working
-
-### Security
-- [ ] No hardcoded secrets in code
-- [ ] IAM permissions follow least privilege
-- [ ] KMS encryption working
-- [ ] External ID for cross-account access
-- [ ] Security policy in SECURITY.md
-- [ ] Vulnerability reporting process documented
-
-### Community
-- [ ] GitHub repository public
-- [ ] CONTRIBUTING.md complete
-- [ ] CODE_OF_CONDUCT.md present
-- [ ] Issue templates created
-- [ ] PR template created
-
-## Post-Publishing
-
-### 1. Update README.md
-
-Update the SAR installation section:
-
-```markdown
-### Option 1: AWS Serverless Application Repository (Recommended)
-
-1. Go to [AWS Serverless Application Repository](https://serverlessrepo.aws.amazon.com/applications/arn:aws:serverlessrepo:us-east-1:YOUR_ACCOUNT:applications/secrets-replicator)
-2. Click "Deploy"
-3. Configure parameters:
-   - DestinationRegion: us-west-2
-   - SourceSecretPattern: arn:aws:secretsmanager:us-east-1:*:secret:*
-4. Review IAM permissions
-5. Click "Deploy"
-```
-
-### 2. Create GitHub Release
-
-```bash
-# Create git tag
-git tag -a v1.0.0 -m "Release v1.0.0 - Production ready"
-git push origin v1.0.0
-
-# Create GitHub release with release notes
+# Create GitHub Release (triggers automatically)
 gh release create v1.0.0 \
-  --title "v1.0.0 - Production Ready" \
-  --notes-file CHANGELOG.md
+  --title "Release v1.0.0" \
+  --notes "Release notes here"
+
+# Or manual trigger
+gh workflow run release-qa.yml --field version=1.0.0
 ```
 
-### 3. Announce
+**Example Output:**
+```
+Version: 1.0.0
+Environment: QA
+Build Package: s3://secrets-replicator-builds-us-west-2/releases/1.0.0/
+Artifact: packaged-template-1.0.0
+```
 
-- [ ] AWS Community forums
-- [ ] AWS Subreddit (r/aws)
-- [ ] Dev.to blog post
-- [ ] LinkedIn/Twitter announcement
-- [ ] AWS Newsletter submission
+### 3. `release-prod.yml` - Deploy Same Package to Prod
 
-### 4. Monitor
+**Trigger:** Manual dispatch only
 
-- [ ] SAR deployment metrics
-- [ ] GitHub issues
-- [ ] GitHub discussions
-- [ ] CloudWatch metrics (if you deploy your own instance)
+**Purpose:** Deploy the exact QA-tested package to Production and SAR
+
+**Process:**
+1. **Download:** Fetches the packaged template from S3 (NO REBUILD)
+   - Uses the exact package that was deployed and tested in QA
+2. **Deploy Prod:** Deploys to production stack
+3. **Publish SAR:** (Optional) Publishes to SAR in multiple regions
+4. **Make Public:** Makes SAR application publicly available
+
+**Critical:** This workflow downloads the pre-built package from QA. If you specify a version that wasn't built in QA, the workflow will fail.
+
+**Command:**
+```bash
+# Promote version 1.0.0 from QA to Prod and publish to SAR
+gh workflow run release-prod.yml \
+  --field version=1.0.0 \
+  --field publish_to_sar=true \
+  --field sar_regions=us-east-1,us-west-2
+
+# Or just deploy to Prod without SAR publishing
+gh workflow run release-prod.yml \
+  --field version=1.0.0 \
+  --field publish_to_sar=false
+```
+
+**Jobs:**
+- `deploy-prod`: Deploys to production stack (always runs)
+- `publish-to-sar`: Publishes to SAR and makes public (only if `publish_to_sar=true`)
+
+### 4. `publish-sar.yml` - Legacy Standalone Publishing
+
+**Trigger:** GitHub Release published or manual dispatch
+
+**Purpose:** Direct SAR publishing (builds from scratch)
+
+**Note:** This workflow is kept for backward compatibility but **does not follow** the "build once, deploy many" principle. Use `release-qa.yml` → `release-prod.yml` instead for production releases.
+
+## Version Management Strategy
+
+### Development (No Version)
+- Uses workflow run number: `BuildNumber=123`
+- No SAR publishing
+- Direct deployment via `deploy-dev.yml`
+
+### QA/Prod (Semantic Versioning)
+- GitHub Release creates git tag (e.g., `v1.0.0`)
+- `release-qa.yml` extracts version (strips 'v' prefix → `1.0.0`)
+- Same version used for QA, Prod, and SAR
+
+### Version in template.yaml
+- Keep a development version (e.g., `0.1.2`)
+- Gets overridden by `--version` parameter in workflows
+- Not committed with each release
+
+## Build Once, Deploy Many
+
+### Why It Matters
+
+**Problem:** Rebuilding for production might produce a different artifact than QA:
+- Different dependency versions
+- Different timestamps
+- Different build environment
+- Different Lambda layer hashes
+
+**Solution:** Build once, store in S3, deploy the same artifact multiple times:
+
+```
+Build v1.0.0 → Store in S3 → Deploy to QA → Test → Deploy to Prod (same package)
+```
+
+### How It Works
+
+1. **QA Build:**
+   ```bash
+   sam build                          # Build Lambda code
+   sam package --s3-bucket builds    # Upload to S3
+   # Lambda code: s3://builds/releases/1.0.0/abc123.zip
+   # Template: s3://builds/releases/1.0.0/packaged-qa.yaml
+   ```
+
+2. **Prod Deploy:**
+   ```bash
+   aws s3 cp s3://builds/releases/1.0.0/packaged-qa.yaml .
+   sam deploy --template-file packaged-qa.yaml
+   # Uses the SAME Lambda zip: s3://builds/releases/1.0.0/abc123.zip
+   ```
+
+3. **SAR Publish:**
+   ```bash
+   # Uses the same packaged-qa.yaml with S3 references
+   sam publish --template packaged-qa.yaml
+   # Consumers get the same Lambda code that was tested in QA
+   ```
+
+## S3 Buckets
+
+### Build Artifacts Bucket
+- **Name:** `secrets-replicator-builds-REGION`
+- **Purpose:** Store packaged templates and Lambda code
+- **Lifecycle:** Keep for 90 days or longer
+- **Structure:**
+  ```
+  secrets-replicator-builds-us-west-2/
+  └── releases/
+      ├── 1.0.0/
+      │   ├── packaged-qa.yaml
+      │   ├── abc123.zip (Lambda code)
+      │   └── ...
+      └── 1.0.1/
+          ├── packaged-qa.yaml
+          └── ...
+  ```
+
+### SAR Documentation Buckets
+- **Name:** `secrets-replicator-sar-REGION`
+- **Purpose:** Store README.md and LICENSE for SAR
+- **Regions:** One bucket per SAR publishing region
+- **Access:** Public read via bucket policy (SAR service + consumers)
+
+## Complete Release Process
+
+### Step 1: Create GitHub Release (Triggers QA Build)
+
+```bash
+# Create release with git tag
+gh release create v1.0.0 \
+  --title "Release v1.0.0" \
+  --notes "
+## Features
+- Feature 1
+- Feature 2
+
+## Bug Fixes
+- Fix 1
+- Fix 2
+"
+
+# This automatically triggers release-qa.yml
+```
+
+### Step 2: Monitor QA Deployment
+
+```bash
+# Watch the workflow
+gh run watch
+
+# Or view in browser
+gh run view --web
+```
+
+**Verify:**
+- ✅ Build succeeds
+- ✅ Package uploaded to S3
+- ✅ QA deployment succeeds
+- ✅ Artifact uploaded to GitHub
+
+### Step 3: Test in QA Environment
+
+```bash
+# Get QA stack outputs
+aws cloudformation describe-stacks \
+  --stack-name secrets-replicator-qa \
+  --query 'Stacks[0].Outputs'
+
+# Test the deployed function
+# ... your testing process ...
+```
+
+### Step 4: Promote to Production
+
+```bash
+# Deploy to Prod and publish to SAR
+gh workflow run release-prod.yml \
+  --field version=1.0.0 \
+  --field publish_to_sar=true \
+  --field sar_regions=us-east-1,us-west-2
+
+# Monitor the deployment
+gh run watch
+```
+
+**Verify:**
+- ✅ Same package downloaded from S3
+- ✅ Prod deployment succeeds
+- ✅ SAR publishing succeeds in all regions
+- ✅ Application made public
+
+### Step 5: Verify SAR Publication
+
+```bash
+# Check SAR application
+aws serverlessrepo get-application \
+  --application-id arn:aws:serverlessrepo:us-east-1:ACCOUNT_ID:applications/secrets-replicator \
+  --region us-east-1
+
+# Verify version
+aws serverlessrepo list-application-versions \
+  --application-id arn:aws:serverlessrepo:us-east-1:ACCOUNT_ID:applications/secrets-replicator \
+  --region us-east-1 \
+  --query 'Versions[?SemanticVersion==`1.0.0`]'
+```
 
 ## Troubleshooting
 
-### "Template validation failed"
+### Error: Packaged template not found in S3
 
-Check that all required SAR metadata fields are present:
-- Name
-- Description
-- Author
-- SpdxLicenseId
-- LicenseUrl
-- ReadmeUrl
-- HomePageUrl
-- SourceCodeUrl
-- SemanticVersion
+**Cause:** Version not built in QA, or wrong version number
 
-### "Unable to upload artifact"
+**Solution:**
+```bash
+# List available versions
+aws s3 ls s3://secrets-replicator-builds-us-west-2/releases/
 
-Ensure S3 bucket is in the same region as your SAR publish command (us-west-2 for private testing).
+# Re-run QA build for the correct version
+gh workflow run release-qa.yml --field version=1.0.0
+```
 
-### "README not rendering"
+### Error: SAR publish fails with "Version already exists"
 
-- README must be named README.md (case-sensitive)
-- Must be in repository root
-- Must use valid Markdown
+**Cause:** Version already published to SAR
 
-## Resources
+**Solution:**
+- SAR versions are immutable
+- Bump version and release again
+- Or use `aws serverlessrepo update-application` to update metadata
 
-- [AWS SAR Developer Guide](https://docs.aws.amazon.com/serverlessrepo/latest/devguide/what-is-serverlessrepo.html)
-- [SAR Publishing Requirements](https://docs.aws.amazon.com/serverlessrepo/latest/devguide/serverlessrepo-how-to-publish.html)
-- [SAM Publish Command](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-publish.html)
+### Error: README not displaying in SAR
+
+**Cause:** SAR caching delay or bucket permissions
+
+**Solution:**
+```bash
+# Verify README uploaded to S3
+aws s3 ls s3://secrets-replicator-sar-us-east-1/README.md
+
+# Check bucket policy allows SAR service
+aws s3api get-bucket-policy --bucket secrets-replicator-sar-us-east-1
+
+# Wait a few minutes for SAR cache to refresh
+```
+
+## Best Practices
+
+1. **Always test in QA before Prod:**
+   - Never skip QA deployment
+   - Run your test suite against QA stack
+   - Verify monitoring and alarms
+
+2. **Use semantic versioning:**
+   - `MAJOR.MINOR.PATCH` format
+   - Bump MAJOR for breaking changes
+   - Bump MINOR for new features
+   - Bump PATCH for bug fixes
+
+3. **Keep version history:**
+   - GitHub Releases serve as changelog
+   - S3 packages retained for 90 days
+   - CloudFormation retains stack history
+
+4. **Monitor deployments:**
+   - Watch GitHub Actions runs
+   - Check CloudWatch Logs
+   - Verify CloudFormation events
+
+5. **Document release notes:**
+   - Include features, fixes, and breaking changes
+   - Reference issue numbers
+   - Note any special deployment instructions
+
+## Migration from Old Workflow
+
+If you previously used `publish-sar.yml`:
+
+**Old approach (rebuild every time):**
+```bash
+gh release create v1.0.0
+# publish-sar.yml: sam build → sam publish
+```
+
+**New approach (build once):**
+```bash
+# Step 1: Build and deploy to QA
+gh release create v1.0.0
+# release-qa.yml: sam build → sam package → sam deploy (QA)
+
+# Step 2: Test in QA
+# ... testing ...
+
+# Step 3: Promote to Prod using same package
+gh workflow run release-prod.yml --field version=1.0.0
+# release-prod.yml: download from S3 → sam deploy (Prod) → sam publish
+```
+
+## References
+
+- [AWS SAM Documentation](https://docs.aws.amazon.com/serverless-application-model/)
+- [AWS SAR Publishing Guide](https://docs.aws.amazon.com/serverlessrepo/latest/devguide/serverlessrepo-how-to-publish.html)
+- [GitHub Actions Workflows](https://docs.github.com/en/actions)

@@ -1,0 +1,85 @@
+name: Deploy to Dev
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-dev:
+    name: Deploy to Dev Environment
+    runs-on: ubuntu-latest
+    environment: development
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-Dev-${{ github.run_id }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          echo "### Deploying to Dev Environment" >> $GITHUB_STEP_SUMMARY
+          echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Number:** ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Git SHA:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build application
+        run: sam build
+
+      - name: Deploy to dev
+        run: |
+          sam deploy \
+            --stack-name secrets-replicator-dev \
+            --region ${{ vars.AWS_REGION }} \
+            --capabilities CAPABILITY_IAM \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --resolve-s3 \
+            --tags \
+              Environment=dev \
+              BuildNumber=${{ github.run_number }} \
+              GitSha=${{ github.sha }} \
+              ManagedBy=GitHubActions
+
+      - name: Get stack outputs
+        run: |
+          echo "### Deployment Complete! ✅" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Stack Name:** secrets-replicator-dev" >> $GITHUB_STEP_SUMMARY
+
+          aws cloudformation describe-stacks \
+            --stack-name secrets-replicator-dev \
+            --region ${{ vars.AWS_REGION }} \
+            --query 'Stacks[0].Outputs' \
+            --output table >> $GITHUB_STEP_SUMMARY
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "✅ Dev deployment successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Dev deployment failed" >> $GITHUB_STEP_SUMMARY
+          fi
