@@ -226,19 +226,19 @@ jobs:
 
             # Update S3 URLs for this region's SAR bucket
             python3 << EOF
-import yaml
+          import yaml
 
-with open('packaged-sar.yaml', 'r') as f:
-    template = yaml.safe_load(f)
+          with open('packaged-sar.yaml', 'r') as f:
+              template = yaml.safe_load(f)
 
-# Update SAR metadata URLs for this region
-if 'Metadata' in template and 'AWS::ServerlessRepo::Application' in template['Metadata']:
-    template['Metadata']['AWS::ServerlessRepo::Application']['LicenseUrl'] = 's3://secrets-replicator-sar-${REGION}/LICENSE'
-    template['Metadata']['AWS::ServerlessRepo::Application']['ReadmeUrl'] = 's3://secrets-replicator-sar-${REGION}/README.md'
+          # Update SAR metadata URLs for this region
+          if 'Metadata' in template and 'AWS::ServerlessRepo::Application' in template['Metadata']:
+              template['Metadata']['AWS::ServerlessRepo::Application']['LicenseUrl'] = 's3://secrets-replicator-sar-${REGION}/LICENSE'
+              template['Metadata']['AWS::ServerlessRepo::Application']['ReadmeUrl'] = 's3://secrets-replicator-sar-${REGION}/README.md'
 
-with open('packaged-sar-${REGION}.yaml', 'w') as f:
-    yaml.dump(template, f, default_flow_style=False, sort_keys=False)
-EOF
+          with open('packaged-sar-${REGION}.yaml', 'w') as f:
+              yaml.dump(template, f, default_flow_style=False, sort_keys=False)
+          EOF
 
             # Publish to SAR
             OUTPUT=$(sam publish \
