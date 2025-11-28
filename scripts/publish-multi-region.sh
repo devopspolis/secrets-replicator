@@ -2,28 +2,49 @@
 set -e
 
 # Multi-region SAR publishing script
-# Usage: ./scripts/publish-multi-region.sh [regions...] [--no-container]
-# Example: ./scripts/publish-multi-region.sh us-east-1 us-west-2 eu-west-1
-# Example: ./scripts/publish-multi-region.sh us-east-1 --no-container
+# Usage: ./scripts/publish-multi-region.sh [regions...] [--no-container] [--version VERSION]
+#
+# Examples:
+#   ./scripts/publish-multi-region.sh us-east-1 us-west-2
+#   ./scripts/publish-multi-region.sh us-east-1 --no-container
+#   ./scripts/publish-multi-region.sh us-east-1 --version 1.0.0
+#   ./scripts/publish-multi-region.sh us-east-1 us-west-2 --version 1.0.0 --no-container
+#
+# Options:
+#   --no-container     Build without Docker (uses local Python)
+#   --version VERSION  Override SemanticVersion in template (default: use template.yaml value)
+#                      Useful for CI/CD pipelines or publishing from git tags
 #
 # Prerequisites:
 # - PyYAML: pip3 install --user pyyaml
 # - S3 buckets: secrets-replicator-sar-<region> (created automatically)
-# - Files in bucket: LICENSE and README.md must be uploaded separately
+# - FILES in bucket: LICENSE and README.md must be uploaded separately
 #
-# Note: S3 bucket naming changed from secrets-replicator-sar-ACCOUNT_ID-REGION
-#       to secrets-replicator-sar-REGION for simplicity
+# Version Management:
+# - Development: Keep version in template.yaml (e.g., 0.3.0-dev)
+# - Releases: Use --version flag driven by git tags (e.g., --version 1.0.0)
+# - CI/CD: GitHub workflow extracts version from release tag
 
 # Parse arguments
 USE_CONTAINER=true
+OVERRIDE_VERSION=""
 REGION_ARGS=()
 
-for arg in "$@"; do
-  if [ "$arg" = "--no-container" ]; then
-    USE_CONTAINER=false
-  else
-    REGION_ARGS+=("$arg")
-  fi
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --no-container)
+      USE_CONTAINER=false
+      shift
+      ;;
+    --version)
+      OVERRIDE_VERSION="$2"
+      shift 2
+      ;;
+    *)
+      REGION_ARGS+=("$1")
+      shift
+      ;;
+  esac
 done
 
 # Default regions if none specified
@@ -42,6 +63,9 @@ echo "=========================================="
 echo "Account ID: ${ACCOUNT_ID}"
 echo "Regions: ${REGIONS}"
 echo "Use Container: ${USE_CONTAINER}"
+if [ -n "$OVERRIDE_VERSION" ]; then
+  echo "Version Override: ${OVERRIDE_VERSION}"
+fi
 echo ""
 
 # Build once (reuse for all regions)
@@ -126,6 +150,13 @@ with open('packaged-${REGION}.yaml', 'r') as f:
 # Copy Metadata section
 if 'Metadata' in original:
     packaged['Metadata'] = original['Metadata']
+
+    # Override version if specified
+    override_version = '${OVERRIDE_VERSION}'
+    if override_version:
+        if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
+            packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = override_version
+            print(f'Version overridden to: {override_version}', file=sys.stderr)
 
 # Write back
 with open('packaged-${REGION}.yaml', 'w') as f:

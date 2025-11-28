@@ -1,0 +1,194 @@
+name: Publish to SAR
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Semantic version to publish (e.g., 1.0.0)'
+        required: true
+        type: string
+      regions:
+        description: 'Regions to publish (comma-separated)'
+        required: false
+        default: 'us-east-1,us-west-2'
+        type: string
+      make_public:
+        description: 'Make application public'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write  # Required for OIDC
+  contents: read
+
+jobs:
+  publish-sar:
+    name: Publish to SAR
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip3 install pyyaml
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-PublishSAR-${{ github.run_id }}
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
+          echo "### AWS Identity ✅" >> $GITHUB_STEP_SUMMARY
+          echo "Account: ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "Region: ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Extract version from release tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Extract from release tag (strip 'v' prefix if present)
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VERSION="${TAG_NAME#v}"
+            MAKE_PUBLIC="true"
+            echo "Source: GitHub Release tag ${TAG_NAME}"
+          else
+            # Manual workflow dispatch
+            VERSION="${{ github.event.inputs.version }}"
+            MAKE_PUBLIC="${{ github.event.inputs.make_public }}"
+            echo "Source: Manual input"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "make_public=${MAKE_PUBLIC}" >> $GITHUB_OUTPUT
+
+          echo "### Publishing Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Make Public:** ${MAKE_PUBLIC}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Parse regions
+        id: regions
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Default regions for automated releases
+            REGIONS="us-east-1 us-west-2"
+          else
+            # User-specified regions (convert comma to space)
+            REGIONS="${{ github.event.inputs.regions }}"
+            REGIONS="${REGIONS//,/ }"
+          fi
+
+          echo "regions=${REGIONS}" >> $GITHUB_OUTPUT
+          echo "**Regions:** ${REGIONS}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Upload README and LICENSE to S3
+        run: |
+          echo "### Uploading README and LICENSE..." >> $GITHUB_STEP_SUMMARY
+
+          for REGION in ${{ steps.regions.outputs.regions }}; do
+            BUCKET="secrets-replicator-sar-${REGION}"
+
+            # Create bucket if it doesn't exist
+            if ! aws s3 ls "s3://${BUCKET}" --region ${REGION} 2>/dev/null; then
+              echo "Creating bucket: ${BUCKET}"
+              if [ "${REGION}" = "us-east-1" ]; then
+                aws s3 mb "s3://${BUCKET}" --region ${REGION}
+              else
+                aws s3api create-bucket \
+                  --bucket "${BUCKET}" \
+                  --region ${REGION} \
+                  --create-bucket-configuration LocationConstraint=${REGION}
+              fi
+
+              # Set bucket policy
+              aws s3api put-bucket-policy \
+                --bucket "${BUCKET}" \
+                --policy "{
+                  \"Version\": \"2012-10-17\",
+                  \"Statement\": [
+                    {
+                      \"Effect\": \"Allow\",
+                      \"Principal\": {\"Service\": \"serverlessrepo.amazonaws.com\"},
+                      \"Action\": \"s3:GetObject\",
+                      \"Resource\": \"arn:aws:s3:::${BUCKET}/*\"
+                    },
+                    {
+                      \"Effect\": \"Allow\",
+                      \"Principal\": \"*\",
+                      \"Action\": \"s3:GetObject\",
+                      \"Resource\": \"arn:aws:s3:::${BUCKET}/*\",
+                      \"Condition\": {\"Bool\": {\"aws:SecureTransport\": \"true\"}}
+                    }
+                  ]
+                }" \
+                --region ${REGION}
+
+              # Disable public access blocks for bucket policies
+              aws s3api put-public-access-block \
+                --bucket "${BUCKET}" \
+                --public-access-block-configuration \
+                  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false \
+                --region ${REGION}
+            fi
+
+            echo "Uploading files to ${BUCKET}..."
+            aws s3 cp README.md "s3://${BUCKET}/README.md" --region ${REGION}
+            aws s3 cp LICENSE "s3://${BUCKET}/LICENSE" --region ${REGION}
+
+            echo "- ✅ ${REGION}" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: Publish to SAR
+        run: |
+          echo "### Publishing to SAR..." >> $GITHUB_STEP_SUMMARY
+
+          ./scripts/publish-multi-region.sh \
+            ${{ steps.regions.outputs.regions }} \
+            --version ${{ steps.version.outputs.version }} \
+            --no-container
+
+      - name: Make application public
+        if: steps.version.outputs.make_public == 'true'
+        run: |
+          echo "### Making application public..." >> $GITHUB_STEP_SUMMARY
+
+          for REGION in ${{ steps.regions.outputs.regions }}; do
+            aws serverlessrepo put-application-policy \
+              --application-id arn:aws:serverlessrepo:${REGION}:${{ vars.AWS_ACCOUNT_ID }}:applications/secrets-replicator \
+              --statements Principals='*',Actions=Deploy \
+              --region ${REGION}
+
+            CONSOLE_URL="https://console.aws.amazon.com/serverlessrepo/home?region=${REGION}#/published-applications/arn:aws:serverlessrepo:${REGION}:${{ vars.AWS_ACCOUNT_ID }}:applications~secrets-replicator"
+            echo "- ✅ [${REGION}](${CONSOLE_URL})" >> $GITHUB_STEP_SUMMARY
+          done
+
+      - name: Create release summary
+        run: |
+          echo "## 🎉 SAR Publishing Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Regions:** ${{ steps.regions.outputs.regions }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Visibility:** ${{ steps.version.outputs.make_public == 'true' && 'Public' || 'Private' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### View in AWS Console" >> $GITHUB_STEP_SUMMARY
+          for REGION in ${{ steps.regions.outputs.regions }}; do
+            echo "- [${REGION} - Available Applications](https://console.aws.amazon.com/serverlessrepo/home?region=${REGION}#/available-applications)" >> $GITHUB_STEP_SUMMARY
+          done
