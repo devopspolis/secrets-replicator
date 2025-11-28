@@ -116,30 +116,30 @@ jobs:
 
       - name: Restore SAR metadata with version
         run: |
-          $(which python3) -c "
-import yaml
-import sys
+          python3 << 'EOF'
+          import yaml
+          import sys
 
-# Read original template
-with open('template.yaml', 'r') as f:
-    original = yaml.safe_load(f)
+          # Read original template
+          with open('template.yaml', 'r') as f:
+              original = yaml.safe_load(f)
 
-# Read packaged template
-with open('packaged-qa.yaml', 'r') as f:
-    packaged = yaml.safe_load(f)
+          # Read packaged template
+          with open('packaged-qa.yaml', 'r') as f:
+              packaged = yaml.safe_load(f)
 
-# Copy and update Metadata section
-if 'Metadata' in original:
-    packaged['Metadata'] = original['Metadata']
-    # Override version
-    if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
-        packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = '${{ steps.version.outputs.version }}'
-        print(f'Version set to: ${{ steps.version.outputs.version }}', file=sys.stderr)
+          # Copy and update Metadata section
+          if 'Metadata' in original:
+              packaged['Metadata'] = original['Metadata']
+              # Override version
+              if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
+                  packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = '${{ steps.version.outputs.version }}'
+                  print(f'Version set to: ${{ steps.version.outputs.version }}', file=sys.stderr)
 
-# Write back
-with open('packaged-qa.yaml', 'w') as f:
-    yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
-"
+          # Write back
+          with open('packaged-qa.yaml', 'w') as f:
+              yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
+          EOF
 
       - name: Store packaged template as artifact
         uses: actions/upload-artifact@v4

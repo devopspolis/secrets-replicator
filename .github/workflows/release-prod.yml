@@ -225,7 +225,7 @@ jobs:
             echo "Publishing to ${REGION}..."
 
             # Update S3 URLs for this region's SAR bucket
-            $(which python3) -c "
+            python3 << EOF
 import yaml
 
 with open('packaged-sar.yaml', 'r') as f:
@@ -238,7 +238,7 @@ if 'Metadata' in template and 'AWS::ServerlessRepo::Application' in template['Me
 
 with open('packaged-sar-${REGION}.yaml', 'w') as f:
     yaml.dump(template, f, default_flow_style=False, sort_keys=False)
-"
+EOF
 
             # Publish to SAR
             OUTPUT=$(sam publish \
