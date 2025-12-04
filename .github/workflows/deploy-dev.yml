@@ -1,4 +1,4 @@
-name: Deploy to Development
+name: Deploy to Dev
 
 on:
   push:
@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   deploy-dev:
-    name: Deploy to Development Environment
+    name: Deploy to Dev
     runs-on: ubuntu-latest
     environment: dev
 
@@ -47,7 +47,7 @@ jobs:
       - name: Verify AWS identity
         run: |
           aws sts get-caller-identity
-          echo "### Deploying to Development Environment" >> $GITHUB_STEP_SUMMARY
+          echo "### Deploying to Dev Environment" >> $GITHUB_STEP_SUMMARY
           echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "**Git Ref:** \`${{ github.event.inputs.ref || github.ref }}\`" >> $GITHUB_STEP_SUMMARY
@@ -57,7 +57,7 @@ jobs:
       - name: Build application
         run: sam build
 
-      - name: Deploy to development
+      - name: Deploy to Dev
         run: |
           sam deploy \
             --stack-name secrets-replicator-dev \
