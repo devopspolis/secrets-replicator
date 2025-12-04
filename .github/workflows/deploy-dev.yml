@@ -67,6 +67,7 @@ jobs:
             --no-fail-on-empty-changeset \
             --resolve-s3 \
             --parameter-overrides \
+              Environment=dev \
               DestinationRegion=us-east-1 \
             --tags \
               Environment=dev \

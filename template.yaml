@@ -95,6 +95,15 @@ Parameters:
     Description: Prefix for transformation secrets (these will be excluded from replication)
     Default: 'secrets-replicator/transformations/'
 
+  Environment:
+    Type: String
+    Description: Deployment environment (dev, qa, or prod) - used for Lambda alias name
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
 Resources:
   # Lambda Function
   SecretReplicatorFunction:
@@ -105,6 +114,7 @@ Resources:
       Handler: handler.lambda_handler
       Description: Replicate secrets across regions/accounts with transformations
       MemorySize: 256
+      AutoPublishAlias: !Ref Environment
       Environment:
         Variables:
           DEST_REGION: !Ref DestinationRegion
