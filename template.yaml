@@ -100,7 +100,7 @@ Resources:
   SecretReplicatorFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: !Sub ${AWS::StackName}-replicator
+      FunctionName: secrets-replicator
       CodeUri: src/
       Handler: handler.lambda_handler
       Description: Replicate secrets across regions/accounts with transformations

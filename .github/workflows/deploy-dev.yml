@@ -66,6 +66,8 @@ jobs:
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
             --resolve-s3 \
+            --parameter-overrides \
+              DestinationRegion=us-east-1 \
             --tags \
               Environment=dev \
               BuildNumber=${{ github.run_number }} \
