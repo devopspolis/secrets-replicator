@@ -21,26 +21,72 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read  # To download artifacts from previous runs
+  actions: read
 
 jobs:
-  deploy-prod:
-    name: Deploy to Prod (No Rebuild)
+  setup:
+    name: Setup
     runs-on: ubuntu-latest
-    environment: production
+    outputs:
+      environment: ${{ steps.set_environment.outputs.environment }}
+      version: ${{ steps.set_version.outputs.version }}
+      s3_bucket: ${{ steps.set_s3.outputs.s3_bucket }}
+      s3_uri: ${{ steps.set_s3.outputs.s3_uri }}
+      publish_to_sar: ${{ steps.set_sar.outputs.publish_to_sar }}
+      sar_regions: ${{ steps.set_sar.outputs.sar_regions }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Set environment
+        id: set_environment
+        run: echo "environment=production" >> $GITHUB_OUTPUT
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Set version
+        id: set_version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          # Strip 'v' prefix if present
+          VERSION="${VERSION#v}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Install PyYAML
-        run: pip3 install pyyaml
+          echo "### Promoting to Production" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Publish to SAR:** ${{ github.event.inputs.publish_to_sar }}" >> $GITHUB_STEP_SUMMARY
 
+      - name: Set S3 configuration
+        id: set_s3
+        run: |
+          echo "s3_bucket=secrets-replicator-builds" >> $GITHUB_OUTPUT
+          echo "s3_uri=s3://secrets-replicator-builds/releases/${{ steps.set_version.outputs.version }}/packaged-qa.yaml" >> $GITHUB_OUTPUT
+
+      - name: Set SAR configuration
+        id: set_sar
+        run: |
+          echo "publish_to_sar=${{ github.event.inputs.publish_to_sar }}" >> $GITHUB_OUTPUT
+          echo "sar_regions=${{ github.event.inputs.sar_regions }}" >> $GITHUB_OUTPUT
+
+  promote-from-qa:
+    name: Promote Package from QA
+    needs: setup
+    uses: devopspolis/github-actions/.github/workflows/promote-s3-artifact.yml@main
+    with:
+      environment: qa
+      s3_uri: ${{ needs.setup.outputs.s3_uri }}
+      artifact_name: packaged-template-${{ needs.setup.outputs.version }}
+      artifact_file: packaged-qa.yaml
+    secrets: inherit
+
+  approval:
+    name: Approval
+    needs: [setup, promote-from-qa]
+    uses: devopspolis/github-actions/.github/workflows/approval.yml@main
+
+  deploy-to-prod:
+    name: Deploy to Production
+    needs: [setup, promote-from-qa, approval]
+    runs-on: ubuntu-latest
+    environment: prod
+
+    steps:
       - name: Set up SAM CLI
         uses: aws-actions/setup-sam@v2
         with:
@@ -51,43 +97,37 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: GitHubActions-Prod-${{ github.run_id }}
+          role-session-name: GitHubActions-Prod-Deploy-${{ github.run_id }}
 
       - name: Verify AWS identity
         run: |
           aws sts get-caller-identity
-          echo "### Promoting to Production" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ github.event.inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "### Deploying to Production" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Publish to SAR:** ${{ github.event.inputs.publish_to_sar }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Download packaged template from S3
+      - name: Download package from GitHub artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.promote-from-qa.outputs.artifact_name }}
+
+      - name: Verify package
         run: |
-          S3_BUCKET="secrets-replicator-builds-${{ vars.AWS_REGION }}"
-          S3_KEY="releases/${{ github.event.inputs.version }}/packaged-qa.yaml"
-
-          echo "### Downloading QA Build Package..." >> $GITHUB_STEP_SUMMARY
-          echo "**Source:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
-
-          # Download the exact package that was deployed to QA
-          aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" packaged-prod.yaml --region ${{ vars.AWS_REGION }}
-
-          if [ ! -f packaged-prod.yaml ]; then
-            echo "❌ ERROR: Packaged template not found in S3" >> $GITHUB_STEP_SUMMARY
-            echo "Version ${{ github.event.inputs.version }} may not have been built for QA" >> $GITHUB_STEP_SUMMARY
+          if [ ! -f packaged-qa.yaml ]; then
+            echo "❌ ERROR: Package not found" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
 
-          echo "✅ Package downloaded successfully" >> $GITHUB_STEP_SUMMARY
+          echo "### Using QA Package" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Package retrieved from QA account (via environment switching)" >> $GITHUB_STEP_SUMMARY
 
-      - name: Deploy to Prod environment (same package as QA)
+      - name: Deploy to Production
         run: |
           echo "### Deploying to Production..." >> $GITHUB_STEP_SUMMARY
-          echo "**Using exact QA build package (no rebuild)**" >> $GITHUB_STEP_SUMMARY
 
           sam deploy \
-            --template-file packaged-prod.yaml \
+            --template-file packaged-qa.yaml \
             --stack-name secrets-replicator-prod \
             --region ${{ vars.AWS_REGION }} \
             --capabilities CAPABILITY_IAM \
@@ -95,10 +135,10 @@ jobs:
             --no-fail-on-empty-changeset \
             --tags \
               Environment=prod \
-              Version=${{ github.event.inputs.version }} \
+              Version=${{ needs.setup.outputs.version }} \
               ManagedBy=GitHubActions
 
-      - name: Get Prod stack outputs
+      - name: Get Production stack outputs
         run: |
           echo "### Production Deployment Complete! ✅" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -112,9 +152,9 @@ jobs:
   publish-to-sar:
     name: Publish to SAR
     runs-on: ubuntu-latest
-    needs: deploy-prod
-    if: github.event.inputs.publish_to_sar == 'true'
-    environment: production
+    needs: [setup, promote-from-qa, deploy-to-prod]
+    if: needs.setup.outputs.publish_to_sar == 'true'
+    environment: prod
 
     steps:
       - name: Checkout code
@@ -143,22 +183,24 @@ jobs:
       - name: Parse regions
         id: regions
         run: |
-          REGIONS="${{ github.event.inputs.sar_regions }}"
+          REGIONS="${{ needs.setup.outputs.sar_regions }}"
           REGIONS="${REGIONS//,/ }"  # Convert comma to space
           echo "regions=${REGIONS}" >> $GITHUB_OUTPUT
           echo "### Publishing to SAR" >> $GITHUB_STEP_SUMMARY
           echo "**Regions:** ${REGIONS}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Download packaged template from S3
+      - name: Download package from GitHub artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.promote-from-qa.outputs.artifact_name }}
+
+      - name: Prepare SAR template
         run: |
-          S3_BUCKET="secrets-replicator-builds-${{ vars.AWS_REGION }}"
-          S3_KEY="releases/${{ github.event.inputs.version }}/packaged-qa.yaml"
-
           echo "### Using Tested Package from QA..." >> $GITHUB_STEP_SUMMARY
-          echo "**Source:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Same package deployed to QA and Production" >> $GITHUB_STEP_SUMMARY
 
-          # Download the exact package that was tested in QA and deployed to Prod
-          aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" packaged-sar.yaml --region ${{ vars.AWS_REGION }}
+          # Use packaged-qa.yaml for SAR publishing
+          cp packaged-qa.yaml packaged-sar.yaml
 
       - name: Upload README and LICENSE to SAR buckets
         run: |
@@ -279,7 +321,7 @@ jobs:
         run: |
           echo "## 🎉 Production Release Complete!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ github.event.inputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**SAR Regions:** ${{ steps.regions.outputs.regions }}" >> $GITHUB_STEP_SUMMARY
           echo "**Visibility:** Public" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -28,7 +28,7 @@ jobs:
   publish-sar:
     name: Publish to SAR
     runs-on: ubuntu-latest
-    environment: production
+    environment: prod
 
     steps:
       - name: Checkout code

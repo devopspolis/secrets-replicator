@@ -17,7 +17,7 @@ jobs:
   test-sar:
     name: Test SAR Deployment
     runs-on: ubuntu-latest
-    environment: production  # Uses GitHub environment with AWS_ACCOUNT_ID and AWS_REGION variables
+    environment: prod  # Uses GitHub environment with AWS_ACCOUNT_ID and AWS_REGION variables
 
     steps:
       - name: Checkout code

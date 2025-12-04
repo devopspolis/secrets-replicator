@@ -10,8 +10,8 @@ on:
         required: true
         type: choice
         options:
-          - production
-        default: 'production'
+          - prod
+        default: 'prod'
 
 permissions:
   id-token: write  # Required for OIDC
@@ -21,7 +21,7 @@ jobs:
   deploy:
     name: Deploy to Production
     runs-on: ubuntu-latest
-    environment: production  # Uses GitHub environment with AWS_ACCOUNT_ID and AWS_REGION variables
+    environment: prod  # Uses GitHub environment with AWS_ACCOUNT_ID and AWS_REGION variables
 
     steps:
       - name: Checkout code
@@ -76,7 +76,7 @@ jobs:
               LogLevel='INFO' \
               EnableMetrics='true' \
             --tags \
-              Environment=production \
+              Environment=prod \
               Project=SecretsReplicator \
               ManagedBy=GitHubActions \
               Version=${{ github.ref_name }}
@@ -134,10 +134,10 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               ref: context.ref,
-              environment: 'production',
+              environment: 'prod',
               required_contexts: [],
               auto_merge: false,
-              description: 'Deployment to AWS production',
+              description: 'Deployment to AWS prod',
             });
 
             await github.rest.repos.createDeploymentStatus({
@@ -145,7 +145,7 @@ jobs:
               repo: context.repo.repo,
               deployment_id: deployment.data.id,
               state: 'success',
-              description: 'Successfully deployed to production',
+              description: 'Successfully deployed to prod',
               environment_url: 'https://console.aws.amazon.com/lambda/home?region=${{ vars.AWS_REGION }}#/functions/secrets-replicator-prod-replicator',
             });
 
@@ -154,7 +154,7 @@ jobs:
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Version:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Environment:** production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Environment:** prod" >> $GITHUB_STEP_SUMMARY
           echo "- **Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Account ID:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Stack:** secrets-replicator-prod" >> $GITHUB_STEP_SUMMARY
