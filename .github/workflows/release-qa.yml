@@ -6,17 +6,99 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Semantic version (e.g., 1.0.0)'
+        description: 'Semantic version tag (e.g., v1.0.0 or 1.0.0)'
         required: true
         type: string
+      create_tag:
+        description: 'Create git tag if it does not exist'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   id-token: write
-  contents: read
+  contents: write  # Needed to create tags
+  actions: read
 
 jobs:
-  build-and-deploy-qa:
-    name: Build Once and Deploy to QA
+  setup:
+    name: Setup
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.set_environment.outputs.environment }}
+      version: ${{ steps.set_version.outputs.version }}
+      s3_bucket: ${{ steps.set_s3.outputs.s3_bucket }}
+      s3_uri: ${{ steps.set_s3.outputs.s3_uri }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create git tag if workflow_dispatch
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_tag == 'true'
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+
+          # Ensure version has 'v' prefix for tag
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            TAG_NAME="v${VERSION}"
+          else
+            TAG_NAME="${VERSION}"
+          fi
+
+          echo "### Creating Git Tag" >> $GITHUB_STEP_SUMMARY
+          echo "**Tag:** \`${TAG_NAME}\`" >> $GITHUB_STEP_SUMMARY
+
+          # Check if tag already exists
+          if git rev-parse "${TAG_NAME}" >/dev/null 2>&1; then
+            echo "✅ Tag ${TAG_NAME} already exists" >> $GITHUB_STEP_SUMMARY
+            echo "Tag already exists: ${TAG_NAME}"
+          else
+            # Configure git
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            # Create and push tag
+            git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME} for QA deployment"
+            git push origin "${TAG_NAME}"
+
+            echo "✅ Created and pushed tag ${TAG_NAME}" >> $GITHUB_STEP_SUMMARY
+            echo "Created tag: ${TAG_NAME}"
+          fi
+
+      - name: Set environment
+        id: set_environment
+        run: echo "environment=qa" >> $GITHUB_OUTPUT
+
+      - name: Set version
+        id: set_version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG_NAME="${{ github.event.release.tag_name }}"
+            VERSION="${TAG_NAME#v}"  # Strip 'v' prefix
+            echo "Source: GitHub Release tag ${TAG_NAME}"
+          else
+            VERSION="${{ github.event.inputs.version }}"
+            # Strip 'v' prefix if present
+            VERSION="${VERSION#v}"
+            echo "Source: Manual input"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+
+          echo "### Building Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** QA" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set S3 configuration
+        id: set_s3
+        run: |
+          echo "s3_bucket=secrets-replicator-builds" >> $GITHUB_OUTPUT
+          echo "s3_uri=secrets-replicator-builds/${{ steps.set_version.outputs.version }}/packaged-qa.yaml" >> $GITHUB_OUTPUT
+
+  build-and-package:
+    name: Build and Package
+    needs: setup
     runs-on: ubuntu-latest
     environment: qa
 
@@ -42,25 +124,7 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: GitHubActions-QA-${{ github.run_id }}
-
-      - name: Extract version from release tag
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            TAG_NAME="${{ github.event.release.tag_name }}"
-            VERSION="${TAG_NAME#v}"  # Strip 'v' prefix
-            echo "Source: GitHub Release tag ${TAG_NAME}"
-          else
-            VERSION="${{ github.event.inputs.version }}"
-            echo "Source: Manual input"
-          fi
-
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-
-          echo "### Building Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Environment:** QA" >> $GITHUB_STEP_SUMMARY
+          role-session-name: GitHubActions-QA-Build-${{ github.run_id }}
 
       - name: Verify AWS identity
         run: |
@@ -68,16 +132,15 @@ jobs:
           echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Build application (build once)
+      - name: Build application
         run: |
           echo "### Building Application..." >> $GITHUB_STEP_SUMMARY
           sam build
 
       - name: Package application (upload to S3)
         run: |
-          # Use version-specific S3 prefix for this build
-          S3_BUCKET="secrets-replicator-builds-${{ vars.AWS_REGION }}"
-          S3_PREFIX="releases/${{ steps.version.outputs.version }}"
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_PREFIX="releases/${{ needs.setup.outputs.version }}"
 
           # Create bucket if it doesn't exist
           if ! aws s3 ls "s3://${S3_BUCKET}" --region ${{ vars.AWS_REGION }} 2>/dev/null; then
@@ -110,10 +173,6 @@ jobs:
 
           echo "**Package Location:** s3://${S3_BUCKET}/${S3_PREFIX}/" >> $GITHUB_STEP_SUMMARY
 
-          # Store S3 location for prod deployment
-          echo "S3_BUCKET=${S3_BUCKET}" >> $GITHUB_ENV
-          echo "S3_PREFIX=${S3_PREFIX}" >> $GITHUB_ENV
-
       - name: Restore SAR metadata with version
         run: |
           python3 << 'EOF'
@@ -133,20 +192,79 @@ jobs:
               packaged['Metadata'] = original['Metadata']
               # Override version
               if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
-                  packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = '${{ steps.version.outputs.version }}'
-                  print(f'Version set to: ${{ steps.version.outputs.version }}', file=sys.stderr)
+                  packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = '${{ needs.setup.outputs.version }}'
+                  print(f'Version set to: ${{ needs.setup.outputs.version }}', file=sys.stderr)
 
           # Write back
           with open('packaged-qa.yaml', 'w') as f:
               yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
           EOF
 
-      - name: Store packaged template as artifact
+      - name: Upload packaged template to S3
+        run: |
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_KEY="releases/${{ needs.setup.outputs.version }}/packaged-qa.yaml"
+
+          aws s3 cp packaged-qa.yaml "s3://${S3_BUCKET}/${S3_KEY}" \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "### Package Uploaded to S3" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 URI:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Store packaged template as GitHub artifact (backup)
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-template-${{ steps.version.outputs.version }}
+          name: packaged-template-${{ needs.setup.outputs.version }}
           path: packaged-qa.yaml
           retention-days: 90
+
+      - name: Build summary
+        run: |
+          echo "## 📦 Build Complete - Awaiting Approval" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Package:** s3://${{ needs.setup.outputs.s3_bucket }}/releases/${{ needs.setup.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub Artifact:** packaged-template-${{ needs.setup.outputs.version }} (backup)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Approve deployment to QA environment" >> $GITHUB_STEP_SUMMARY
+          echo "2. After QA validation, promote to production via 'Release to Prod' workflow" >> $GITHUB_STEP_SUMMARY
+
+  approval:
+    name: Approval
+    needs: [setup, build-and-package]
+    uses: devopspolis/github-actions/.github/workflows/approval.yml@main
+
+  deploy-to-qa:
+    name: Deploy to QA
+    needs: [setup, build-and-package, approval]
+    runs-on: ubuntu-latest
+    environment: qa
+
+    steps:
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-QA-Deploy-${{ github.run_id }}
+
+      - name: Download packaged template from S3
+        run: |
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_KEY="releases/${{ needs.setup.outputs.version }}/packaged-qa.yaml"
+
+          echo "### Downloading Package from S3..." >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
+
+          aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" packaged-qa.yaml \
+            --region ${{ vars.AWS_REGION }}
 
       - name: Deploy to QA environment
         run: |
@@ -161,7 +279,7 @@ jobs:
             --no-fail-on-empty-changeset \
             --tags \
               Environment=qa \
-              Version=${{ steps.version.outputs.version }} \
+              Version=${{ needs.setup.outputs.version }} \
               ManagedBy=GitHubActions
 
       - name: Get QA stack outputs
@@ -175,15 +293,14 @@ jobs:
             --query 'Stacks[0].Outputs' \
             --output table >> $GITHUB_STEP_SUMMARY
 
-      - name: Create release summary
+      - name: Deployment summary
         run: |
-          echo "## 🎉 QA Release Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 QA Deployment Complete!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Build Package:** s3://${S3_BUCKET}/${S3_PREFIX}/" >> $GITHUB_STEP_SUMMARY
-          echo "**Artifact:** packaged-template-${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Stack:** secrets-replicator-qa" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
-          echo "1. Test in QA environment" >> $GITHUB_STEP_SUMMARY
-          echo "2. When ready, trigger 'Release to Prod' workflow with version \`${{ steps.version.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "3. The SAME package will be deployed to Prod (no rebuild)" >> $GITHUB_STEP_SUMMARY
+          echo "1. Validate functionality in QA environment" >> $GITHUB_STEP_SUMMARY
+          echo "2. When ready, trigger 'Release to Prod' workflow with version \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. Production will retrieve package from QA S3 using environment switching" >> $GITHUB_STEP_SUMMARY
