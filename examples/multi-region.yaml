@@ -1,0 +1,59 @@
+# Multi-Region Replication Example
+# Replicate secrets to multiple regions with region-specific transformations and name mappings
+#
+# Usage:
+#   sam deploy \
+#     --template-file template.yaml \
+#     --parameter-overrides $(cat examples/multi-region.yaml | grep -v '^#' | tr '\n' ' ') \
+#     --capabilities CAPABILITY_IAM
+
+# Multi-destination configuration (JSON-encoded)
+# Each destination can have its own region, account, name mappings, and KMS key
+Destinations='[
+  {
+    "region": "us-east-1",
+    "secret_names": "secrets-replicator/names/us-east-1"
+  },
+  {
+    "region": "eu-west-1",
+    "secret_names": "secrets-replicator/names/eu-west-1"
+  },
+  {
+    "region": "ap-southeast-1"
+  }
+]'
+
+# Filter configuration (controls which secrets get replicated)
+# Each secret in the filter maps a pattern to a transformation
+SecretsFilter=secrets-replicator/filters/multi-region
+SecretsFilterCacheTTL=300
+
+# Transformation mode
+TransformMode=auto
+
+# Logging and metrics
+LogLevel=INFO
+EnableMetrics=true
+
+# Environment
+Environment=prod
+
+# Example filter secret content (secrets-replicator/filters/multi-region):
+# {
+#   "app/*/database": "transformations/replace-region",
+#   "app/*/api-keys": "transformations/replace-endpoints"
+# }
+
+# Example name mapping for us-east-1 (secrets-replicator/names/us-east-1):
+# {
+#   "app/prod/database": "app/prod-us-east-1/database"
+# }
+
+# Example name mapping for eu-west-1 (secrets-replicator/names/eu-west-1):
+# {
+#   "app/prod/database": "app/prod-eu-west-1/database"
+# }
+
+# Example transformation (secrets-replicator/transformations/replace-region):
+# s/us-west-2/{{DEST_REGION}}/g
+# Note: Transformation is applied, then destination name mapping happens

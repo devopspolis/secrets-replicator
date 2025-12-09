@@ -8,7 +8,7 @@ regions and accounts with transformations.
 import re
 import time
 from typing import Dict, Any
-from config import load_config_from_env, ConfigurationError, ReplicatorConfig, TRANSFORMATION_SECRET_PREFIX, NAME_MAPPING_PREFIX
+from config import load_config_from_env, ConfigurationError, ReplicatorConfig, DestinationConfig, TRANSFORMATION_SECRET_PREFIX, NAME_MAPPING_PREFIX
 from event_parser import parse_eventbridge_event, validate_event_for_replication, EventParsingError
 from transformer import (
     transform_secret, parse_sedfile, parse_json_mapping,
@@ -356,164 +356,248 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'body': f'Error retrieving source secret: {e}'
             }
 
-        # Write to destination
-        try:
-            dest_client = create_secrets_manager_client(
-                region=config.dest_region,
-                role_arn=config.dest_account_role_arn
-            )
+        # Write to all configured destinations
+        all_destinations_succeeded = True
+        destination_results = []
 
-            # Determine destination secret name using name mapping lookup
-            dest_secret_name = get_destination_name(secret_event.secret_id, config, source_client)
+        for dest_idx, destination in enumerate(config.destinations, 1):
+            log_event(logger, 'INFO', f'Replicating to destination {dest_idx}/{len(config.destinations)}',
+                     dest_region=destination.region,
+                     has_role_arn=bool(destination.account_role_arn))
 
-            # Check if destination would be a transformation secret (defense-in-depth)
-            if dest_secret_name.startswith(TRANSFORMATION_SECRET_PREFIX):
-                log_event(logger, 'ERROR', 'Cannot replicate to transformation secret',
-                         source_secret=secret_event.secret_id,
-                         dest_secret=dest_secret_name,
-                         transformation_prefix=TRANSFORMATION_SECRET_PREFIX)
-                return {
-                    'statusCode': 400,
-                    'body': f'Cannot replicate to transformation secret: {dest_secret_name}'
-                }
-
-            # Check if destination would be a name mapping secret (defense-in-depth)
-            if dest_secret_name.startswith(NAME_MAPPING_PREFIX):
-                log_event(logger, 'ERROR', 'Cannot replicate to name mapping secret',
-                         source_secret=secret_event.secret_id,
-                         dest_secret=dest_secret_name,
-                         name_mapping_prefix=NAME_MAPPING_PREFIX)
-                return {
-                    'statusCode': 400,
-                    'body': f'Cannot replicate to name mapping secret: {dest_secret_name}'
-                }
-
-            # Log if name mapping was used
-            if dest_secret_name != secret_event.secret_id:
-                log_event(logger, 'INFO', 'Name mapping applied',
-                         source_secret=secret_event.secret_id,
-                         dest_secret=dest_secret_name)
-
-            log_secret_operation(logger, 'write', dest_secret_name,
-                               region=config.dest_region)
-
-            # Write secret (binary or string)
-            if is_binary:
-                # For binary secrets, we don't transform, just replicate
-                # Note: put_secret currently only supports string secrets
-                # Binary replication would need additional implementation
-                log_event(logger, 'WARNING', 'Binary secret replication not yet implemented',
-                         secret_id=dest_secret_name)
-                return {
-                    'statusCode': 501,
-                    'body': 'Binary secret replication not implemented'
-                }
-            else:
-                response = dest_client.put_secret(
-                    secret_id=dest_secret_name,
-                    secret_value=transformed_value,
-                    kms_key_id=config.kms_key_id,
-                    description=f'Replicated from {secret_event.region}/{secret_event.secret_id}'
+            try:
+                dest_client = create_secrets_manager_client(
+                    region=destination.region,
+                    role_arn=destination.account_role_arn
                 )
 
-            duration_ms = (time.time() - start_time) * 1000
+                # Create a temporary config object for name mapping lookup (backward compatibility)
+                temp_config = ReplicatorConfig(
+                    destinations=[destination],
+                    transform_mode=config.transform_mode,
+                    log_level=config.log_level,
+                    enable_metrics=config.enable_metrics,
+                    dlq_arn=config.dlq_arn,
+                    timeout_seconds=config.timeout_seconds,
+                    max_secret_size=config.max_secret_size,
+                    secrets_filter=config.secrets_filter,
+                    secrets_filter_cache_ttl=config.secrets_filter_cache_ttl
+                )
+                temp_config.dest_secret_names = destination.secret_names
+                temp_config.dest_secret_names_cache_ttl = destination.secret_names_cache_ttl
 
-            log_replication(
-                logger,
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                secret_id=secret_event.secret_id,
-                success=True,
-                duration_ms=duration_ms
-            )
+                # Determine destination secret name using name mapping lookup
+                dest_secret_name = get_destination_name(secret_event.secret_id, temp_config, source_client)
 
-            # Publish replication success metrics
-            metrics.publish_replication_success(
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                duration_ms=duration_ms,
-                transform_mode=config.transform_mode,
-                secret_size_bytes=len(transformed_value) if not is_binary else None
-            )
+                # Check if destination would be a transformation secret (defense-in-depth)
+                if dest_secret_name.startswith(TRANSFORMATION_SECRET_PREFIX):
+                    log_event(logger, 'ERROR', 'Cannot replicate to transformation secret',
+                             source_secret=secret_event.secret_id,
+                             dest_secret=dest_secret_name,
+                             transformation_prefix=TRANSFORMATION_SECRET_PREFIX)
+                    destination_results.append({
+                        'region': destination.region,
+                        'secret_name': dest_secret_name,
+                        'success': False,
+                        'error': f'Cannot replicate to transformation secret: {dest_secret_name}'
+                    })
+                    all_destinations_succeeded = False
+                    continue
 
-            # Determine transform mode for response
-            if len(transformation_chain) == 0:
-                transform_mode_response = 'passthrough'
-            elif len(transformation_chain) == 1:
-                transform_mode_response = config.transform_mode
-            else:
-                transform_mode_response = 'chain'
+                # Check if destination would be a name mapping secret (defense-in-depth)
+                if dest_secret_name.startswith(NAME_MAPPING_PREFIX):
+                    log_event(logger, 'ERROR', 'Cannot replicate to name mapping secret',
+                             source_secret=secret_event.secret_id,
+                             dest_secret=dest_secret_name,
+                             name_mapping_prefix=NAME_MAPPING_PREFIX)
+                    destination_results.append({
+                        'region': destination.region,
+                        'secret_name': dest_secret_name,
+                        'success': False,
+                        'error': f'Cannot replicate to name mapping secret: {dest_secret_name}'
+                    })
+                    all_destinations_succeeded = False
+                    continue
+
+                # Log if name mapping was used
+                if dest_secret_name != secret_event.secret_id:
+                    log_event(logger, 'INFO', 'Name mapping applied',
+                             source_secret=secret_event.secret_id,
+                             dest_secret=dest_secret_name,
+                             dest_region=destination.region)
+
+                log_secret_operation(logger, 'write', dest_secret_name,
+                                   region=destination.region)
+
+                # Write secret (binary or string)
+                if is_binary:
+                    # For binary secrets, we don't transform, just replicate
+                    # Note: put_secret currently only supports string secrets
+                    # Binary replication would need additional implementation
+                    log_event(logger, 'WARNING', 'Binary secret replication not yet implemented',
+                             secret_id=dest_secret_name,
+                             dest_region=destination.region)
+                    destination_results.append({
+                        'region': destination.region,
+                        'secret_name': dest_secret_name,
+                        'success': False,
+                        'error': 'Binary secret replication not implemented'
+                    })
+                    all_destinations_succeeded = False
+                    continue
+                else:
+                    response = dest_client.put_secret(
+                        secret_id=dest_secret_name,
+                        secret_value=transformed_value,
+                        kms_key_id=destination.kms_key_id,
+                        description=f'Replicated from {secret_event.region}/{secret_event.secret_id}'
+                    )
+
+                dest_duration_ms = (time.time() - start_time) * 1000
+
+                log_replication(
+                    logger,
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    secret_id=secret_event.secret_id,
+                    success=True,
+                    duration_ms=dest_duration_ms
+                )
+
+                # Publish replication success metrics
+                metrics.publish_replication_success(
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    duration_ms=dest_duration_ms,
+                    transform_mode=config.transform_mode,
+                    secret_size_bytes=len(transformed_value) if not is_binary else None
+                )
+
+                # Record successful destination
+                destination_results.append({
+                    'region': destination.region,
+                    'secret_name': dest_secret_name,
+                    'success': True,
+                    'arn': response['ARN'],
+                    'version_id': response['VersionId'],
+                    'duration_ms': round(dest_duration_ms, 2)
+                })
+
+                log_event(logger, 'INFO', f'Successfully replicated to destination {dest_idx}/{len(config.destinations)}',
+                         dest_region=destination.region,
+                         dest_secret=dest_secret_name,
+                         duration_ms=dest_duration_ms)
+
+            except AccessDeniedError as e:
+                dest_duration_ms = (time.time() - start_time) * 1000
+                log_replication(
+                    logger,
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    secret_id=secret_event.secret_id,
+                    success=False,
+                    duration_ms=dest_duration_ms,
+                    error=str(e)
+                )
+
+                # Publish replication failure metrics
+                metrics.publish_replication_failure(
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    error_type='AccessDeniedError',
+                    duration_ms=dest_duration_ms
+                )
+
+                destination_results.append({
+                    'region': destination.region,
+                    'success': False,
+                    'error': f'Access denied: {e}',
+                    'error_type': 'AccessDeniedError'
+                })
+                all_destinations_succeeded = False
+
+            except (ThrottlingError, AWSClientError) as e:
+                dest_duration_ms = (time.time() - start_time) * 1000
+                log_replication(
+                    logger,
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    secret_id=secret_event.secret_id,
+                    success=False,
+                    duration_ms=dest_duration_ms,
+                    error=str(e)
+                )
+
+                # Publish replication failure metrics
+                error_type = type(e).__name__
+                metrics.publish_replication_failure(
+                    source_region=secret_event.region,
+                    dest_region=destination.region,
+                    error_type=error_type,
+                    duration_ms=dest_duration_ms
+                )
+
+                # Track throttling events separately
+                if isinstance(e, ThrottlingError):
+                    metrics.publish_throttling_event(
+                        operation='put_secret',
+                        region=destination.region
+                    )
+
+                destination_results.append({
+                    'region': destination.region,
+                    'success': False,
+                    'error': str(e),
+                    'error_type': error_type
+                })
+                all_destinations_succeeded = False
+
+        # After all destinations processed, generate final response
+        total_duration_ms = (time.time() - start_time) * 1000
+        successful_destinations = [r for r in destination_results if r['success']]
+        failed_destinations = [r for r in destination_results if not r['success']]
+
+        # Determine transform mode for response
+        if len(transformation_chain) == 0:
+            transform_mode_response = 'passthrough'
+        elif len(transformation_chain) == 1:
+            transform_mode_response = config.transform_mode
+        else:
+            transform_mode_response = 'chain'
+
+        if all_destinations_succeeded:
+            log_event(logger, 'INFO', 'All destinations replicated successfully',
+                     total_destinations=len(config.destinations),
+                     total_duration_ms=total_duration_ms)
 
             return {
                 'statusCode': 200,
-                'body': 'Secret replicated successfully',
+                'body': 'Secret replicated successfully to all destinations',
                 'sourceSecretId': secret_event.secret_id,
                 'sourceRegion': secret_event.region,
-                'destSecretId': dest_secret_name,
-                'destRegion': config.dest_region,
-                'destArn': response['ARN'],
-                'destVersionId': response['VersionId'],
                 'transformMode': transform_mode_response,
                 'rulesCount': total_rules_count,
                 'transformChainLength': len(transformation_chain),
-                'durationMs': round(duration_ms, 2)
+                'totalDurationMs': round(total_duration_ms, 2),
+                'destinations': destination_results
             }
-
-        except AccessDeniedError as e:
-            duration_ms = (time.time() - start_time) * 1000
-            log_replication(
-                logger,
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                secret_id=secret_event.secret_id,
-                success=False,
-                duration_ms=duration_ms,
-                error=str(e)
-            )
-
-            # Publish replication failure metrics
-            metrics.publish_replication_failure(
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                error_type='AccessDeniedError',
-                duration_ms=duration_ms
-            )
+        else:
+            log_event(logger, 'WARNING', 'Some destinations failed',
+                     total_destinations=len(config.destinations),
+                     successful=len(successful_destinations),
+                     failed=len(failed_destinations),
+                     total_duration_ms=total_duration_ms)
 
             return {
-                'statusCode': 403,
-                'body': f'Access denied to destination: {e}'
-            }
-        except (ThrottlingError, AWSClientError) as e:
-            duration_ms = (time.time() - start_time) * 1000
-            log_replication(
-                logger,
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                secret_id=secret_event.secret_id,
-                success=False,
-                duration_ms=duration_ms,
-                error=str(e)
-            )
-
-            # Publish replication failure metrics
-            error_type = type(e).__name__
-            metrics.publish_replication_failure(
-                source_region=secret_event.region,
-                dest_region=config.dest_region,
-                error_type=error_type,
-                duration_ms=duration_ms
-            )
-
-            # Track throttling events separately
-            if isinstance(e, ThrottlingError):
-                metrics.publish_throttling_event(
-                    operation='put_secret',
-                    region=config.dest_region
-                )
-
-            return {
-                'statusCode': 500,
-                'body': f'Error writing to destination: {e}'
+                'statusCode': 207,  # Multi-Status
+                'body': f'Replicated to {len(successful_destinations)}/{len(config.destinations)} destinations',
+                'sourceSecretId': secret_event.secret_id,
+                'sourceRegion': secret_event.region,
+                'transformMode': transform_mode_response,
+                'rulesCount': total_rules_count,
+                'transformChainLength': len(transformation_chain),
+                'totalDurationMs': round(total_duration_ms, 2),
+                'destinations': destination_results
             }
 
     except Exception as e:

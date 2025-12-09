@@ -38,6 +38,14 @@ Globals:
     Tracing: Active
 
 Parameters:
+  Destinations:
+    Type: String
+    Description: |
+      JSON-encoded list of destination configurations for multi-region replication.
+      Example: '[{"region":"us-east-1","secretNames":"secrets-replicator/names/us-east-1"},{"region":"eu-west-1"}]'
+      Leave empty to use legacy single-destination parameters (DestinationRegion, etc.).
+    Default: ''
+
   SecretsFilter:
     Type: String
     Description: |
@@ -130,6 +138,7 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
+          DESTINATIONS: !Ref Destinations
           DEST_REGION: !Ref DestinationRegion
           DEST_SECRET_NAMES: !Ref DestSecretNames
           DEST_SECRET_NAMES_CACHE_TTL: !Ref DestSecretNamesCacheTTL
