@@ -383,7 +383,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
 
 - [ ] **5.2 SAM Configuration**
   - [ ] Create `samconfig.toml` for deployment
-  - [ ] Define deployment stages (dev, staging, prod)
+  - [ ] Define deployment stages (dev, qa, prod)
   - [ ] Configure stack name and tags
 
 - [ ] **5.3 Example Configurations**
@@ -502,7 +502,7 @@ This document outlines the step-by-step implementation plan for the Secrets Repl
     - Trigger on release tag
     - Build Lambda package
     - Run SAM build and package
-    - Deploy to staging
+    - Deploy to qa
     - Run integration tests
     - Deploy to production (manual approval)
 

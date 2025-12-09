@@ -355,7 +355,7 @@ aws secretsmanager tag-resource \
 - **Tag-based routing**: Source secrets specify which transformation to use via tags
 - **Automatic exclusion**: Transformation secrets are never replicated (both source and destination filtering)
 - **Version rollback**: Use `AWSPREVIOUS` version stage to rollback transformations
-- **Multi-environment**: Different transformation secrets for dev→staging, staging→prod, etc.
+- **Multi-environment**: Different transformation secrets for dev→qa, qa→prod, etc.
 
 ## IAM Permissions
 

@@ -8,7 +8,7 @@ durations, error counts, and retry statistics.
 import boto3
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
-from src.logger import get_logger
+from logger import get_logger
 
 # Initialize logger
 logger = get_logger()

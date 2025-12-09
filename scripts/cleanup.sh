@@ -10,7 +10,7 @@
 # Environments:
 #   default   - Delete default stack
 #   dev       - Delete development stack
-#   staging   - Delete staging stack
+#   qa   - Delete qa stack
 #   prod      - Delete production stack
 #
 # Options:
@@ -38,7 +38,7 @@ KEEP_LOGS=false
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    dev|staging|prod)
+    dev|qa|prod)
       ENVIRONMENT=$1
       shift
       ;;
@@ -53,7 +53,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [environment] [options]"
       echo ""
-      echo "Environments: default, dev, staging, prod"
+      echo "Environments: default, dev, qa, prod"
       echo "Options:"
       echo "  --yes, -y    Skip confirmation prompt"
       echo "  --keep-logs  Keep CloudWatch log groups"

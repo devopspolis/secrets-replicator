@@ -38,23 +38,42 @@ Globals:
     Tracing: Active
 
 Parameters:
-  SourceSecretPattern:
+  SecretsFilter:
     Type: String
-    Description: ARN pattern for source secrets (supports wildcards, e.g., arn:aws:secretsmanager:us-east-1:*:secret:source-*)
-    Default: '*'
+    Description: |
+      Comma-separated list of Secrets Manager secret names containing filter configurations.
+      Each filter secret should contain JSON key-value mappings of secret patterns to transformation names.
+      Example: secrets-replicator/filters/production,secrets-replicator/filters/databases
+      Leave empty to replicate all secrets (not recommended for production).
+    Default: ''
+
+  SecretsFilterCacheTTL:
+    Type: Number
+    Description: Cache TTL for filter configuration in seconds (default 300 = 5 minutes)
+    Default: 300
+    MinValue: 0
+    MaxValue: 3600
 
   DestinationRegion:
     Type: String
     Description: AWS region for destination secret
     Default: us-west-2
 
-  DestinationSecretName:
+  DestSecretNames:
     Type: String
     Description: |
-      Override destination secret name (leave empty to use source name - RECOMMENDED).
-      Standard DR/HA pattern uses identical names across regions.
-      Only specify for migration scenarios or testing.
+      Comma-separated list of Secrets Manager secret names containing name mapping configurations.
+      Each mapping secret should contain JSON key-value mappings of source names to destination names.
+      Example: secrets-replicator/names/production,secrets-replicator/names/special
+      Leave empty to use source name as destination name (standard DR/HA pattern).
     Default: ''
+
+  DestSecretNamesCacheTTL:
+    Type: Number
+    Description: Cache TTL for name mapping configuration in seconds (default 300 = 5 minutes)
+    Default: 300
+    MinValue: 0
+    MaxValue: 3600
 
   DestinationAccountRoleArn:
     Type: String
@@ -90,14 +109,9 @@ Parameters:
       - 'true'
       - 'false'
 
-  TransformationSecretPrefix:
-    Type: String
-    Description: Prefix for transformation secrets (these will be excluded from replication)
-    Default: 'secrets-replicator/transformations/'
-
   Environment:
     Type: String
-    Description: Deployment environment (dev, qa, or prod) - used for Lambda alias name
+    Description: Deployment environment (dev, qa, or prod)
     Default: dev
     AllowedValues:
       - dev
@@ -114,29 +128,30 @@ Resources:
       Handler: handler.lambda_handler
       Description: Replicate secrets across regions/accounts with transformations
       MemorySize: 256
-      AutoPublishAlias: !Ref Environment
       Environment:
         Variables:
           DEST_REGION: !Ref DestinationRegion
-          DEST_SECRET_NAME: !Ref DestinationSecretName
+          DEST_SECRET_NAMES: !Ref DestSecretNames
+          DEST_SECRET_NAMES_CACHE_TTL: !Ref DestSecretNamesCacheTTL
           DEST_ACCOUNT_ROLE_ARN: !Ref DestinationAccountRoleArn
           TRANSFORM_MODE: !Ref TransformMode
           LOG_LEVEL: !Ref LogLevel
           ENABLE_METRICS: !Ref EnableMetrics
-          TRANSFORMATION_SECRET_PREFIX: !Ref TransformationSecretPrefix
+          SECRETS_FILTER: !Ref SecretsFilter
+          SECRETS_FILTER_CACHE_TTL: !Ref SecretsFilterCacheTTL
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
       Policies:
         - Version: '2012-10-17'
           Statement:
-            # Read source secrets
+            # Read source secrets (filtering is done in Lambda code via SECRETS_FILTER)
             - Sid: ReadSourceSecrets
               Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
-              Resource: !Ref SourceSecretPattern
+              Resource: '*'
 
             # Read transformation secrets (for loading transformation rules)
             - Sid: ReadTransformationSecrets
@@ -144,7 +159,7 @@ Resources:
               Action:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${TransformationSecretPrefix}*'
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/transformations/*'
 
             # DENY write to transformation secrets (defense-in-depth security layer)
             - Sid: DenyWriteTransformationSecrets
@@ -154,7 +169,41 @@ Resources:
                 - secretsmanager:PutSecretValue
                 - secretsmanager:UpdateSecret
                 - secretsmanager:DeleteSecret
-              Resource: !Sub 'arn:aws:secretsmanager:*:*:secret:${TransformationSecretPrefix}*'
+              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/transformations/*'
+
+            # Read filter secrets (for loading filter configuration)
+            - Sid: ReadFilterSecrets
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/filters/*'
+
+            # DENY write to filter secrets (defense-in-depth security layer)
+            - Sid: DenyWriteFilterSecrets
+              Effect: Deny
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:DeleteSecret
+              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/filters/*'
+
+            # Read name mapping secrets (for loading name mapping configuration)
+            - Sid: ReadNameMappingSecrets
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/names/*'
+
+            # DENY write to name mapping secrets (defense-in-depth security layer)
+            - Sid: DenyWriteNameMappingSecrets
+              Effect: Deny
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:DeleteSecret
+              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/names/*'
 
             # Write destination secrets (same account)
             - Sid: WriteDestinationSecrets

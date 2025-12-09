@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 
+# Hardcoded prefixes for security and consistency
+TRANSFORMATION_SECRET_PREFIX = 'secrets-replicator/transformations/'
+FILTER_SECRET_PREFIX = 'secrets-replicator/filters/'
+NAME_MAPPING_PREFIX = 'secrets-replicator/names/'
+
+
 class ConfigurationError(Exception):
     """Raised when configuration is invalid"""
     pass
@@ -22,7 +28,6 @@ class ReplicatorConfig:
     dest_region: str                        # Destination AWS region
 
     # Optional fields
-    dest_secret_name: Optional[str] = None  # Override destination secret name
     dest_account_role_arn: Optional[str] = None  # Role ARN for cross-account
     transform_mode: str = 'auto'                  # Transformation mode (auto|sed|json)
     log_level: str = 'INFO'                       # Log level
@@ -34,12 +39,13 @@ class ReplicatorConfig:
     timeout_seconds: int = 5                      # Regex timeout
     max_secret_size: int = 65536                  # Max secret size (64KB)
 
-    # Filtering options
-    source_secret_pattern: Optional[str] = None   # Regex pattern for filtering source secrets
-    source_secret_list: List[str] = field(default_factory=list)  # Explicit list of secret names
-    source_include_tags: List[tuple[str, str]] = field(default_factory=list)  # Include tags (key, value)
-    source_exclude_tags: List[tuple[str, str]] = field(default_factory=list)  # Exclude tags (key, value)
-    transformation_secret_prefix: str = 'secrets-replicator/transformations/'  # Prefix for transformation secrets
+    # Centralized filtering (SECRETS_FILTER)
+    secrets_filter: Optional[str] = None  # Comma-separated list of filter secret names
+    secrets_filter_cache_ttl: int = 300   # Cache TTL in seconds (5 minutes)
+
+    # Name mappings (DEST_SECRET_NAMES)
+    dest_secret_names: Optional[str] = None  # Comma-separated list of name mapping secret names
+    dest_secret_names_cache_ttl: int = 300   # Cache TTL in seconds (5 minutes)
 
     # Internal/computed fields
     source_region: Optional[str] = field(default=None, init=False)
@@ -104,20 +110,6 @@ class ReplicatorConfig:
             raise ConfigurationError(
                 f"max_secret_size must be between 1 and 65536 (got {self.max_secret_size})"
             )
-
-        # Validate transformation secret prefix
-        if not self.transformation_secret_prefix:
-            raise ConfigurationError("transformation_secret_prefix cannot be empty")
-
-        # Validate regex pattern if provided
-        if self.source_secret_pattern:
-            try:
-                import re
-                re.compile(self.source_secret_pattern)
-            except re.error as e:
-                raise ConfigurationError(
-                    f"Invalid source_secret_pattern regex: {e}"
-                )
 
     @staticmethod
     def _is_valid_region(region: str) -> bool:
@@ -206,11 +198,12 @@ def load_config_from_env() -> ReplicatorConfig:
         DLQ_ARN: Dead Letter Queue ARN
         TIMEOUT_SECONDS: Regex timeout (default: 5)
         MAX_SECRET_SIZE: Maximum secret size (default: 65536)
-        SOURCE_SECRET_PATTERN: Regex pattern for filtering source secrets
-        SOURCE_SECRET_LIST: Comma-separated list of secret names to include
-        SOURCE_INCLUDE_TAGS: Comma-separated tag filters to include (Key=Value,Key2=Value2)
-        SOURCE_EXCLUDE_TAGS: Comma-separated tag filters to exclude (Key=Value,Key2=Value2)
-        TRANSFORMATION_SECRET_PREFIX: Prefix for transformation secrets (default: 'transformations/')
+        SECRETS_FILTER: Comma-separated list of filter secret names
+        SECRETS_FILTER_CACHE_TTL: Cache TTL for filter configuration in seconds (default: 300)
+
+    Note:
+        Transformation secret prefix is hardcoded to 'secrets-replicator/transformations/' for security.
+        Filter secret prefix is hardcoded to 'secrets-replicator/filters/' for security.
 
     Returns:
         ReplicatorConfig object
@@ -231,7 +224,6 @@ def load_config_from_env() -> ReplicatorConfig:
         raise ConfigurationError("Missing required environment variable: DEST_REGION")
 
     # Optional fields
-    dest_secret_name = os.environ.get('DEST_SECRET_NAME', '').strip() or None
     dest_account_role_arn = os.environ.get('DEST_ACCOUNT_ROLE_ARN', '').strip() or None
     transform_mode = os.environ.get('TRANSFORM_MODE', 'sed').strip()
     log_level = os.environ.get('LOG_LEVEL', 'INFO').strip()
@@ -248,22 +240,16 @@ def load_config_from_env() -> ReplicatorConfig:
     timeout_seconds = int(os.environ.get('TIMEOUT_SECONDS', '5'))
     max_secret_size = int(os.environ.get('MAX_SECRET_SIZE', '65536'))
 
-    # Filtering options
-    source_secret_pattern = os.environ.get('SOURCE_SECRET_PATTERN', '').strip() or None
-    source_secret_list_str = os.environ.get('SOURCE_SECRET_LIST', '').strip()
-    source_secret_list = [s.strip() for s in source_secret_list_str.split(',') if s.strip()] if source_secret_list_str else []
+    # Centralized filtering (SECRETS_FILTER)
+    secrets_filter = os.environ.get('SECRETS_FILTER', '').strip() or None
+    secrets_filter_cache_ttl = int(os.environ.get('SECRETS_FILTER_CACHE_TTL', '300'))
 
-    source_include_tags_str = os.environ.get('SOURCE_INCLUDE_TAGS', '').strip()
-    source_include_tags = parse_tag_filters(source_include_tags_str)
-
-    source_exclude_tags_str = os.environ.get('SOURCE_EXCLUDE_TAGS', '').strip()
-    source_exclude_tags = parse_tag_filters(source_exclude_tags_str)
-
-    transformation_secret_prefix = os.environ.get('TRANSFORMATION_SECRET_PREFIX', 'secrets-replicator/transformations/').strip()
+    # Name mappings (DEST_SECRET_NAMES)
+    dest_secret_names = os.environ.get('DEST_SECRET_NAMES', '').strip() or None
+    dest_secret_names_cache_ttl = int(os.environ.get('DEST_SECRET_NAMES_CACHE_TTL', '300'))
 
     return ReplicatorConfig(
         dest_region=dest_region,
-        dest_secret_name=dest_secret_name,
         dest_account_role_arn=dest_account_role_arn,
         transform_mode=transform_mode,
         log_level=log_level,
@@ -272,11 +258,10 @@ def load_config_from_env() -> ReplicatorConfig:
         dlq_arn=dlq_arn,
         timeout_seconds=timeout_seconds,
         max_secret_size=max_secret_size,
-        source_secret_pattern=source_secret_pattern,
-        source_secret_list=source_secret_list,
-        source_include_tags=source_include_tags,
-        source_exclude_tags=source_exclude_tags,
-        transformation_secret_prefix=transformation_secret_prefix
+        secrets_filter=secrets_filter,
+        secrets_filter_cache_ttl=secrets_filter_cache_ttl,
+        dest_secret_names=dest_secret_names,
+        dest_secret_names_cache_ttl=dest_secret_names_cache_ttl
     )
 
 

@@ -16,8 +16,8 @@ from tenacity import (
     before_sleep_log,
     after_log
 )
-from src.logger import get_logger
-from src.exceptions import ThrottlingError, InternalServiceError, AWSClientError
+from logger import get_logger
+from exceptions import ThrottlingError, InternalServiceError, AWSClientError
 
 # Get logger for retry operations
 logger = get_logger()

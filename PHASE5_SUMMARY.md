@@ -105,7 +105,7 @@ Created comprehensive SAM configuration supporting multiple environments:
 **Environments Configured**:
 - `default` - Default development/testing environment
 - `dev` - Development environment (auto-approve, DEBUG logging)
-- `staging` - Staging environment (confirmation required, INFO logging)
+- `qa` - QA environment (confirmation required, INFO logging)
 - `prod` - Production environment (confirmation required, INFO logging, strict settings)
 
 **Example Configuration (dev environment)**:
@@ -229,7 +229,7 @@ Created 3 types of transformation examples:
 **a) Deployment Script** (`scripts/deploy.sh`)
 
 **Features**:
-- Environment selection (default, dev, staging, prod)
+- Environment selection (default, dev, qa, prod)
 - Pre-flight checks (SAM CLI, Python 3)
 - Template validation with linting
 - SAM build with caching
@@ -375,8 +375,8 @@ After initial setup, use the environment-based deployment:
 # Development (auto-approve, DEBUG logging)
 ./scripts/deploy.sh dev
 
-# Staging (requires approval, INFO logging)
-./scripts/deploy.sh staging
+# QA (requires approval, INFO logging)
+./scripts/deploy.sh qa
 
 # Production (requires approval, INFO logging)
 ./scripts/deploy.sh prod
@@ -674,14 +674,14 @@ To delete the stack and all resources:
 - **IAM Policy Statements Added**: 4 (Write secrets, KMS decrypt, KMS encrypt, AssumeRole)
 - **Example Configurations**: 4 deployment scenarios
 - **Example Sedfiles**: 3 transformation patterns
-- **Deployment Environments**: 4 (default, dev, staging, prod)
+- **Deployment Environments**: 4 (default, dev, qa, prod)
 
 ## Key Achievements
 
 ✅ Production-ready SAM template with all AWS resources
 ✅ Comprehensive IAM permissions for same-account and cross-account scenarios
 ✅ CloudWatch alarms for Phase 4 custom metrics
-✅ Multi-environment deployment support (dev/staging/prod)
+✅ Multi-environment deployment support (dev/qa/prod)
 ✅ 4 example deployment configurations covering all major scenarios
 ✅ 3 example sedfiles for transformation patterns
 ✅ Automated deployment script with validation and error handling
@@ -814,7 +814,7 @@ Phase 5 delivers a **production-ready deployment infrastructure** for the Secret
 
 Key highlights:
 - **Complete AWS Infrastructure**: All resources defined in SAM template
-- **Multi-Environment Support**: Deploy to dev, staging, and prod with different configs
+- **Multi-Environment Support**: Deploy to dev, qa, and prod with different configs
 - **CloudWatch Alarms**: Proactive monitoring of failures, throttling, and performance
 - **Comprehensive Examples**: 4 deployment scenarios + 3 sedfile patterns
 - **Automated Scripts**: One-command deployment and cleanup

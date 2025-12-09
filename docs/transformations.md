@@ -1462,24 +1462,24 @@ Use multiple transformation secrets for different scenarios:
 **Pattern**: Create environment-specific transformation secrets
 
 ```bash
-# Create dev-to-staging transformation
+# Create dev-to-qa transformation
 aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/dev-to-staging \
-  --secret-string 's/dev/staging/g'
+  --name secrets-replicator/transformations/dev-to-qa \
+  --secret-string 's/dev/qa/g'
 
-# Create staging-to-prod transformation
+# Create qa-to-prod transformation
 aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/staging-to-prod \
-  --secret-string 's/staging/prod/g'
+  --name secrets-replicator/transformations/qa-to-prod \
+  --secret-string 's/qa/prod/g'
 
 # Tag secrets based on promotion path
 aws secretsmanager tag-resource \
   --secret-id my-dev-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=dev-to-staging
+  --tags Key=SecretsReplicator:TransformSecretName,Value=dev-to-qa
 
 aws secretsmanager tag-resource \
-  --secret-id my-staging-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=staging-to-prod
+  --secret-id my-qa-secret \
+  --tags Key=SecretsReplicator:TransformSecretName,Value=qa-to-prod
 ```
 
 This allows different replication flows with appropriate transformations.

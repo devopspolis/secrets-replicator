@@ -758,7 +758,7 @@ gh pr create --fill
 Potential improvements for future iterations:
 
 ### CI/CD Enhancements
-- **Multi-environment deployments**: Dev → Staging → Prod pipeline
+- **Multi-environment deployments**: Dev → QA → Prod pipeline
 - **Canary deployments**: Gradual rollout with traffic shifting
 - **Integration tests in CI**: Run integration tests in ephemeral AWS account
 - **Performance regression**: Track performance metrics over time

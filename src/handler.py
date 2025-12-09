@@ -8,86 +8,25 @@ regions and accounts with transformations.
 import re
 import time
 from typing import Dict, Any
-from src.config import load_config_from_env, ConfigurationError, ReplicatorConfig
-from src.event_parser import parse_eventbridge_event, validate_event_for_replication, EventParsingError
-from src.transformer import (
+from config import load_config_from_env, ConfigurationError, ReplicatorConfig, TRANSFORMATION_SECRET_PREFIX, NAME_MAPPING_PREFIX
+from event_parser import parse_eventbridge_event, validate_event_for_replication, EventParsingError
+from transformer import (
     transform_secret, parse_sedfile, parse_json_mapping,
     detect_transform_type, parse_transform_names, TransformationError
 )
-from src.logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
-from src.utils import get_secret_metadata, is_binary_data
-from src.aws_clients import create_secrets_manager_client
-from src.exceptions import (
+from logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
+from utils import get_secret_metadata, is_binary_data
+from aws_clients import create_secrets_manager_client
+from exceptions import (
     SecretNotFoundError,
     AccessDeniedError,
     InvalidRequestError,
     ThrottlingError,
     AWSClientError
 )
-from src.metrics import get_metrics_publisher
-
-
-def should_replicate(secret_name: str, tags: Dict[str, str], config: ReplicatorConfig) -> bool:
-    """
-    Determine if a secret should be replicated based on filtering rules.
-
-    Implements multi-layered filtering logic with defense-in-depth:
-    1. Hardcoded exclusion for transformation secrets (highest priority)
-    2. Exclude tags (explicitly skip replication)
-    3. Include filters with OR logic (pattern, list, or tags)
-
-    Args:
-        secret_name: Name of the secret to check
-        tags: Secret tags as key-value dict
-        config: ReplicatorConfig with filtering settings
-
-    Returns:
-        True if secret should be replicated, False otherwise
-
-    Examples:
-        >>> config = ReplicatorConfig(dest_region='us-west-2')
-        >>> should_replicate('prod-db', {}, config)
-        True
-        >>> should_replicate('transformations/my-sed', {}, config)
-        False
-    """
-    # LAYER 1: Hardcoded exclusion for transformation secrets (defense-in-depth)
-    if secret_name.startswith(config.transformation_secret_prefix):
-        # This should never happen due to IAM Deny policy, but provides additional safety
-        return False
-
-    # LAYER 2: Exclude tags (explicitly skip replication)
-    for key, value in config.source_exclude_tags:
-        if tags.get(key) == value:
-            return False
-
-    # LAYER 3: Include filters (OR logic)
-    # If no include filters configured, replicate all (except excluded above)
-    has_include_filters = (
-        config.source_secret_pattern is not None or
-        len(config.source_secret_list) > 0 or
-        len(config.source_include_tags) > 0
-    )
-
-    if not has_include_filters:
-        return True
-
-    # Check pattern match
-    if config.source_secret_pattern:
-        if re.match(config.source_secret_pattern, secret_name):
-            return True
-
-    # Check explicit list
-    if secret_name in config.source_secret_list:
-        return True
-
-    # Check include tags (any match)
-    for key, value in config.source_include_tags:
-        if tags.get(key) == value:
-            return True
-
-    # No include filter matched
-    return False
+from metrics import get_metrics_publisher
+from filters import should_replicate_secret
+from name_mappings import get_destination_name
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -152,54 +91,38 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
         config.source_region = secret_event.region
         config.source_account_id = secret_event.account_id
 
-        # Retrieve secret tags for filtering
-        try:
-            source_client = create_secrets_manager_client(region=secret_event.region)
+        # Create Secrets Manager client for source region
+        source_client = create_secrets_manager_client(region=secret_event.region)
 
-            # Get tags for filtering (lightweight operation)
-            secret_tags = source_client.get_secret_tags(secret_event.secret_id)
+        # Extract secret name from ARN (removes AWS 6-char suffix)
+        from event_parser import extract_secret_name_from_arn
+        secret_name = extract_secret_name_from_arn(secret_event.secret_id)
+        if not secret_name:
+            # If extraction fails, use the secret_id as-is (might be a name, not ARN)
+            secret_name = secret_event.secret_id
 
-            log_event(logger, 'DEBUG', 'Retrieved secret tags for filtering',
-                     secret_id=secret_event.secret_id,
-                     tag_count=len(secret_tags))
-        except Exception as e:
-            # If we can't retrieve tags, log warning but continue without tags
-            log_event(logger, 'WARNING', 'Failed to retrieve secret tags, filtering without tags',
-                     secret_id=secret_event.secret_id,
-                     error=str(e))
-            secret_tags = {}
+        # NEW: Check if secret should be replicated using SECRETS_FILTER
+        # Returns (should_replicate: bool, transformation_name: Optional[str])
+        should_replicate_result, transform_secret_name = should_replicate_secret(
+            secret_name,
+            config,
+            source_client
+        )
 
-        # Check if secret should be replicated (filtering logic)
-        if not should_replicate(secret_event.secret_id, secret_tags, config):
+        # Check if secret passed filter check
+        if not should_replicate_result:
             log_event(logger, 'INFO', 'Secret filtered out - not replicating',
                      secret_id=secret_event.secret_id,
-                     reason='Did not match filtering criteria')
+                     reason='Did not match SECRETS_FILTER criteria')
             return {
                 'statusCode': 200,
                 'body': 'Secret skipped (filtered out)',
                 'secretId': secret_event.secret_id,
-                'reason': 'Did not match filtering criteria'
+                'reason': 'Did not match SECRETS_FILTER criteria'
             }
 
-        # Check for transformation secret tags (ADR-002: Transformation Secrets)
-        transform_secret_name = secret_tags.get('SecretsReplicator:TransformSecretName')
-        transform_mode_override = secret_tags.get('SecretsReplicator:TransformMode')
-
-        # Override transform mode if specified in tags
-        if transform_mode_override:
-            if transform_mode_override not in ['sed', 'json']:
-                log_event(logger, 'WARNING', 'Invalid transform mode in tag, using config default',
-                         secret_id=secret_event.secret_id,
-                         tag_value=transform_mode_override,
-                         using=config.transform_mode)
-            else:
-                config.transform_mode = transform_mode_override
-                log_event(logger, 'INFO', 'Transform mode overridden by tag',
-                         secret_id=secret_event.secret_id,
-                         transform_mode=transform_mode_override)
-
-        # Parse transformation chain from tag (supports single or comma-separated list)
-        # If no tag is present, perform pass-through replication (no transformation)
+        # Parse transformation chain (supports single or comma-separated list)
+        # If no transformation specified, perform pass-through replication
         if not transform_secret_name:
             log_event(logger, 'INFO', 'No transformation tag - performing pass-through replication',
                      secret_id=secret_event.secret_id,
@@ -225,7 +148,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             # Load and validate all transformations in the chain
             transformation_chain = []
             for i, transform_name in enumerate(transform_names, 1):
-                full_transform_name = f"{config.transformation_secret_prefix}{transform_name}"
+                # Check if transform_name already has the prefix
+                if transform_name.startswith(TRANSFORMATION_SECRET_PREFIX):
+                    full_transform_name = transform_name
+                else:
+                    full_transform_name = f"{TRANSFORMATION_SECRET_PREFIX}{transform_name}"
 
                 log_event(logger, 'INFO', f'Loading transformation {i}/{len(transform_names)}',
                          secret_id=secret_event.secret_id,
@@ -436,26 +363,36 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 role_arn=config.dest_account_role_arn
             )
 
-            # Determine destination secret name
-            dest_secret_name = config.dest_secret_name or secret_event.secret_id
+            # Determine destination secret name using name mapping lookup
+            dest_secret_name = get_destination_name(secret_event.secret_id, config, source_client)
 
             # Check if destination would be a transformation secret (defense-in-depth)
-            if dest_secret_name.startswith(config.transformation_secret_prefix):
+            if dest_secret_name.startswith(TRANSFORMATION_SECRET_PREFIX):
                 log_event(logger, 'ERROR', 'Cannot replicate to transformation secret',
                          source_secret=secret_event.secret_id,
                          dest_secret=dest_secret_name,
-                         transformation_prefix=config.transformation_secret_prefix)
+                         transformation_prefix=TRANSFORMATION_SECRET_PREFIX)
                 return {
                     'statusCode': 400,
                     'body': f'Cannot replicate to transformation secret: {dest_secret_name}'
                 }
 
-            # Log non-standard configuration if custom destination name is used
-            if config.dest_secret_name:
-                log_event(logger, 'WARNING', 'Using custom destination secret name (non-standard)',
+            # Check if destination would be a name mapping secret (defense-in-depth)
+            if dest_secret_name.startswith(NAME_MAPPING_PREFIX):
+                log_event(logger, 'ERROR', 'Cannot replicate to name mapping secret',
                          source_secret=secret_event.secret_id,
                          dest_secret=dest_secret_name,
-                         note='Standard DR/HA pattern uses identical names across regions')
+                         name_mapping_prefix=NAME_MAPPING_PREFIX)
+                return {
+                    'statusCode': 400,
+                    'body': f'Cannot replicate to name mapping secret: {dest_secret_name}'
+                }
+
+            # Log if name mapping was used
+            if dest_secret_name != secret_event.secret_id:
+                log_event(logger, 'INFO', 'Name mapping applied',
+                         source_secret=secret_event.secret_id,
+                         dest_secret=dest_secret_name)
 
             log_secret_operation(logger, 'write', dest_secret_name,
                                region=config.dest_region)

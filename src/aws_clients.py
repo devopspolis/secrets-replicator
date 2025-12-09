@@ -9,9 +9,9 @@ import boto3
 from typing import Optional, Dict, Any, Tuple
 from botocore.exceptions import ClientError
 from dataclasses import dataclass
-from src.logger import setup_logger
-from src.retry import with_retries
-from src.exceptions import (
+from logger import setup_logger
+from retry import with_retries
+from exceptions import (
     AWSClientError,
     SecretNotFoundError,
     AccessDeniedError,

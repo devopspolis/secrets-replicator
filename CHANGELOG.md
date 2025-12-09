@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Phase 5: SAM Template & Deployment**
   - Complete SAM template with all AWS resources
   - CloudWatch alarms (replication failures, throttling, high duration)
-  - Multi-environment deployment support (dev, staging, prod)
+  - Multi-environment deployment support (dev, qa, prod)
   - Example deployment configurations (4 scenarios)
   - Example sedfiles (basic, regions, JSON)
   - Automated deployment and cleanup scripts

@@ -206,7 +206,7 @@ def log_error(logger, error, context)
 - DELETE_SECRET_EVENT: Secret deletion
 - RESTORE_SECRET_EVENT: Secret restoration
 - ROTATE_SECRET_EVENT: Secret rotation
-- UPDATE_SECRET_VERSION_STAGE_EVENT: Version staging
+- UPDATE_SECRET_VERSION_STAGE_EVENT: Version qa
 - INVALID_EVENT_MISSING_DETAIL: Missing detail field
 - INVALID_EVENT_WRONG_SOURCE: Wrong event source
 

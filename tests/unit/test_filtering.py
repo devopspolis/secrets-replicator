@@ -160,11 +160,11 @@ class TestShouldReplicateIncludePattern:
         """Complex regex pattern matching"""
         config = ReplicatorConfig(
             dest_region='us-west-2',
-            source_secret_pattern=r'^(prod|staging)-(db|api|cache)$'
+            source_secret_pattern=r'^(prod|qa)-(db|api|cache)$'
         )
 
         assert should_replicate('prod-db', {}, config) is True
-        assert should_replicate('staging-api', {}, config) is True
+        assert should_replicate('qa-api', {}, config) is True
         assert should_replicate('dev-db', {}, config) is False
         assert should_replicate('prod-unknown', {}, config) is False
 

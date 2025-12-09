@@ -181,9 +181,9 @@ class TestTransformationPerformance:
         # Create test data
         secret_value = "This is production data in us-east-1 region. " * (secret_size_kb * 20)
         sedfile_content = """
-s/production/staging/g
+s/production/qa/g
 s/us-east-1/us-west-2/g
-s/db-prod/db-staging/g
+s/db-prod/db-qa/g
 """
         rules = parse_sedfile(sedfile_content)
 

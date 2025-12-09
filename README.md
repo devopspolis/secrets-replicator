@@ -73,7 +73,7 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
   - Sed-style regex replacements (e.g., `s/dev/prod/g`)
   - JSON field mappings with JSONPath
   - Region swapping (all AWS services)
-  - Environment promotion (dev → staging → prod)
+  - Environment promotion (dev → qa → prod)
 - ✅ **Binary Secret Detection**: Returns HTTP 501 for binary secrets (not currently supported)
 - ✅ **Secret Size Validation**: Configurable max size (default 64KB)
 
@@ -679,7 +679,7 @@ aws secretsmanager create-secret \
   --name secrets-replicator/transformations/comprehensive-transform \
   --secret-string '# Change environment
 s/dev/prod/g
-s/staging/prod/g
+s/qa/prod/g
 
 # Update hostnames
 s/dev-db\.example\.com/prod-db.example.com/g

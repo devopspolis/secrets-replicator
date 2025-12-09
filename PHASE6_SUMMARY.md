@@ -343,8 +343,8 @@ tests/
 3. **Release**:
    - Full test suite (unit + integration + performance)
    - Security validation tests
-   - Deployment to staging
-   - Integration tests in staging
+   - Deployment to qa
+   - Integration tests in qa
    - Manual approval for production
 
 ---

@@ -8,7 +8,7 @@
 # Environments:
 #   default   - Deploy with default settings
 #   dev       - Deploy to development environment
-#   staging   - Deploy to staging environment
+#   qa   - Deploy to qa environment
 #   prod      - Deploy to production environment
 #
 # Options:
@@ -39,7 +39,7 @@ NO_CONFIRM=false
 # Parse arguments
 while [[ $# -gt 0 ]]; do
   case $1 in
-    dev|staging|prod)
+    dev|qa|prod)
       ENVIRONMENT=$1
       shift
       ;;
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [environment] [options]"
       echo ""
-      echo "Environments: default, dev, staging, prod"
+      echo "Environments: default, dev, qa, prod"
       echo "Options:"
       echo "  --guided         Run in guided mode"
       echo "  --validate-only  Only validate template"

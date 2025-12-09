@@ -9,7 +9,7 @@ import logging
 import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-from src.utils import sanitize_log_message, mask_secret
+from utils import sanitize_log_message, mask_secret
 
 
 class JsonFormatter(logging.Formatter):

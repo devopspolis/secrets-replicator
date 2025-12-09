@@ -224,10 +224,10 @@ transformations/
 ├── databases/
 │   ├── prod-db-region-swap
 │   ├── prod-db-cross-account
-│   └── staging-db-to-prod
+│   └── qa-db-to-prod
 ├── applications/
 │   ├── app-config-prod
-│   ├── api-staging-to-prod
+│   ├── api-qa-to-prod
 │   └── frontend-prod
 └── shared/
     ├── region-us-west-2-to-us-east-1
