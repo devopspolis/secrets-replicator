@@ -112,21 +112,21 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         AWS Account A (Source)                          │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
+┌────────────────────────────────────────────────────────────────────────┐
+│                         AWS Account A (Source)                         │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
 │  ┌──────────────────┐                                                  │
 │  │ Secrets Manager  │ PutSecretValue                                   │
 │  │  (Source Secret) │────────┐                                         │
 │  └──────────────────┘        │                                         │
-│                              ▼                                          │
+│                              ▼                                         │
 │                   ┌─────────────────────┐                              │
 │                   │    EventBridge      │                              │
 │                   │  (Secret Changed)   │                              │
 │                   └──────────┬──────────┘                              │
-│                              │                                          │
-│                              ▼                                          │
+│                              │                                         │
+│                              ▼                                         │
 │         ┌──────────────────────────────────────────────────┐           │
 │         │   Lambda Function                                │           │
 │         │   (Secrets Replicator)                           │           │
@@ -140,42 +140,42 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 │         │ 7. Put transformed secret                        │           │
 │         │ 8. Publish metrics & logs                        │           │
 │         └────────┬────────────────────┬────────────────────┘           │
-│                  │                    │                                 │
-│                  ▼                    ▼                                 │
+│                  │                    │                                │
+│                  ▼                    ▼                                │
 │        ┌──────────────┐    ┌──────────────────┐                        │
 │        │  CloudWatch  │    │  SQS DLQ         │                        │
 │        │  Metrics     │    │  (Failed Events) │                        │
 │        └──────────────┘    └──────────────────┘                        │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-                                     │
-                                     │ AssumeRole (with External ID)
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      AWS Account B (Destination)                        │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    │ AssumeRole (with External ID)
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                      AWS Account B (Destination)                       │
+├────────────────────────────────────────────────────────────────────────┤
+│                                                                        │
 │                   ┌──────────────────────┐                             │
 │                   │  IAM Role            │                             │
 │                   │  (Trust Policy +     │                             │
 │                   │   External ID)       │                             │
 │                   └──────────┬───────────┘                             │
-│                              │                                          │
-│                              ▼                                          │
+│                              │                                         │
+│                              ▼                                         │
 │                   ┌──────────────────────┐                             │
 │                   │  Secrets Manager     │                             │
 │                   │  (Destination Secret)│                             │
 │                   │  [Transformed Value] │                             │
 │                   └──────────────────────┘                             │
-│                              │                                          │
-│                              ▼                                          │
+│                              │                                         │
+│                              ▼                                         │
 │                   ┌──────────────────────┐                             │
 │                   │  KMS Key             │                             │
 │                   │  (Customer Managed)  │                             │
 │                   └──────────────────────┘                             │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Flow
@@ -196,52 +196,44 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 
 ### Prerequisites
 
-- AWS CLI configured with credentials
-- SAM CLI installed ([Installation guide](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html))
-- Python 3.12+
-- Two secrets: source and destination (can be in different regions/accounts)
+- AWS Account with appropriate IAM permissions
+- AWS CLI configured (for post-deployment configuration)
 
-### 5-Minute Setup
+### 3-Minute Setup via AWS Serverless Application Repository
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/devopspolis/secrets-replicator.git
-cd secrets-replicator
+# 1. Deploy from AWS Serverless Application Repository
+# Go to: https://serverlessrepo.aws.amazon.com/applications
+# Search for: "secrets-replicator"
+# Click "Deploy" (accepts default parameters)
 
-# 2. Deploy with SAM
-sam build
-sam deploy --guided
-
-# That's it! Secrets will now be replicated as-is (pass-through mode).
-# For transformations, continue with steps 3-4 below:
-
-# 3. (Optional) Create transformation secret:
+# 2. Create configuration secret (defines replication destinations)
 aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/region-swap \
-  --secret-string 's/us-east-1/us-west-2/g'
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
 
-# 4. (Optional) Tag source secret to use transformation:
-aws secretsmanager tag-resource \
-  --secret-id my-source-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
+# That's it! Secrets will now be replicated to us-west-2 (pass-through mode).
 
-# Note: You can chain multiple transformations with comma-separated values:
-# --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion"
+# 3. Test by creating/updating a source secret
+aws secretsmanager create-secret \
+  --name my-app-secret \
+  --description "Test secret for replication" \
+  --secret-string '{"api_key":"test-12345","region":"us-east-1"}' \
+  --region us-east-1
 
-# 5. Test by updating source secret
-aws secretsmanager put-secret-value \
-  --secret-id my-source-secret \
-  --secret-string '{"host":"db.us-east-1.amazonaws.com","port":"5432"}'
-
-# 5. Verify destination secret (after ~2-5 seconds)
+# 4. Verify replication (after ~2-5 seconds)
 aws secretsmanager get-secret-value \
-  --secret-id my-destination-secret \
+  --secret-id my-app-secret \
   --region us-west-2 \
   --query SecretString \
   --output text
 
 # Expected output:
-# {"host":"db.us-west-2.amazonaws.com","port":"5432"}
+# {"api_key":"test-12345","region":"us-east-1"}
+
+# For transformations and advanced configuration, see Use Cases section below.
 ```
 
 ---
@@ -250,15 +242,29 @@ aws secretsmanager get-secret-value \
 
 ### Option 1: AWS Serverless Application Repository (Recommended)
 
-Deploy directly from SAR with one click:
+Deploy directly from SAR - no build tools required:
 
 1. Go to [AWS Serverless Application Repository](https://serverlessrepo.aws.amazon.com/)
 2. Search for "secrets-replicator"
 3. Click "Deploy"
-4. Configure parameters
+4. Accept default parameters (only Environment selection needed)
 5. Click "Deploy" again
+6. **Post-deployment**: Create configuration secret to define replication destinations
 
-### Option 2: SAM CLI
+```bash
+# After SAR deployment, create configuration secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
+```
+
+See [Configuration](#configuration) section for multi-destination and cross-account setup.
+
+### Option 2: SAM CLI (For Development)
+
+For local development and testing:
 
 ```bash
 # Build
@@ -267,118 +273,157 @@ sam build --cached
 # Deploy (first time)
 sam deploy --guided
 
-# Deploy (subsequent)
-sam deploy --config-env dev
+# Deploy (subsequent deployments)
+sam deploy
+
+# Post-deployment: Create CONFIG_SECRET
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
 ```
 
-### Option 3: Manual CloudFormation
+**Note**: All configuration is runtime-based via Secrets Manager. No deployment parameters needed except `Environment` (dev/qa/prod).
+
+### Option 3: CloudFormation Template
+
+Deploy using pre-packaged template:
 
 ```bash
-# Package
-sam package \
-  --template-file template.yaml \
-  --output-template-file packaged.yaml \
-  --s3-bucket my-deployment-bucket
+# Download latest template from GitHub releases
+wget https://github.com/devopspolis/secrets-replicator/releases/latest/download/packaged.yaml
 
 # Deploy
-sam deploy \
+aws cloudformation deploy \
   --template-file packaged.yaml \
   --stack-name secrets-replicator \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides \
-    SourceSecretArn=arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret \
-    DestSecretName=my-destination-secret \
-    DestRegion=us-west-2
+  --parameter-overrides Environment=dev
+
+# Post-deployment: Create CONFIG_SECRET
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
 ```
 
 ---
 
 ## Configuration
 
-### Multi-Destination Configuration (Recommended)
+All configuration is stored in AWS Secrets Manager and loaded at runtime. This allows you to update replication destinations, name mappings, and transformations without redeploying the Lambda function.
 
-Replicate to multiple regions in a single Lambda invocation using the `Destinations` parameter:
+### Configuration Secret (Required)
 
-```yaml
-# Deploy with multi-destination support
-sam deploy --parameter-overrides \
-  'Destinations=[
-    {"region":"us-east-1","secret_names":"secrets-replicator/names/us-east-1"},
-    {"region":"eu-west-1","secret_names":"secrets-replicator/names/eu-west-1"},
-    {"region":"ap-southeast-1"}
-  ]' \
-  SecretsFilter=secrets-replicator/filters/production \
-  EnableMetrics=true
+The `CONFIG_SECRET` defines all replication destinations. By default, the Lambda function loads configuration from:
+
+```
+secrets-replicator/config/destinations
 ```
 
-**Destinations Parameter Format** (JSON array):
+**Create configuration secret**:
+
+```bash
+# Single destination (same region)
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
+
+# Multiple destinations (multi-region)
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[
+    {"region":"us-west-2"},
+    {"region":"eu-west-1"},
+    {"region":"ap-southeast-1"}
+  ]' \
+  --region us-east-1
+
+# Cross-account destination
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Secrets Replicator destination configurations" \
+  --secret-string '[{
+    "region":"us-west-2",
+    "account_role_arn":"arn:aws:iam::999999999999:role/SecretsReplicatorDestRole"
+  }]' \
+  --region us-east-1
+```
+
+### Destination Configuration Attributes
+
+Each destination in the JSON array supports these attributes:
+
+| Attribute | Required | Default Value | Description |
+|-----------|----------|---------------|-------------|
+| `region` | ✅ Yes | (none) | Target AWS region (e.g., `us-west-2`) |
+| `account_role_arn` | No | `DEFAULT_ROLE_ARN` env var, or (none) | IAM role ARN for cross-account replication |
+| `secret_names` | No | `DEFAULT_SECRET_NAMES` env var, or (none) | Name mapping secret (e.g., `secrets-replicator/names/us-west-2`) |
+| `secret_names_cache_ttl` | No | `SECRET_NAMES_CACHE_TTL` env var, or `300` | Cache TTL for name mappings (seconds) |
+| `kms_key_id` | No | `KMS_KEY_ID` env var, or (none) | KMS key ID/ARN for destination encryption |
+
+**Default Resolution Order**:
+1. **Per-destination value** (specified in configuration secret) - highest priority
+2. **Lambda environment variable** (e.g., `DEFAULT_SECRET_NAMES`, `DEFAULT_ROLE_ARN`)
+3. **Hardcoded default** (e.g., `300` for `secret_names_cache_ttl`) - lowest priority
+
+**Example - Full configuration**:
 ```json
 [
   {
-    "region": "us-east-1",                                      // Required: Target AWS region
-    "account_role_arn": "arn:aws:iam::222222222222:role/...",  // Optional: Cross-account IAM role
-    "secret_names": "secrets-replicator/names/us-east-1",      // Optional: Region-specific name mappings
-    "secret_names_cache_ttl": 300,                              // Optional: Cache TTL (default: 300s)
-    "kms_key_id": "arn:aws:kms:us-east-1:111111111111:key/..." // Optional: KMS key for encryption
+    "region": "us-west-2",
+    "secret_names": "secrets-replicator/names/us-west-2",
+    "kms_key_id": "arn:aws:kms:us-west-2:111111111111:key/..."
   },
   {
-    "region": "eu-west-1"
-    // Minimal config - uses global SecretsFilter and default name mapping
+    "region": "eu-west-1",
+    "account_role_arn": "arn:aws:iam::999999999999:role/SecretsReplicatorDestRole",
+    "secret_names": "secrets-replicator/names/eu-west-1"
   }
 ]
 ```
 
-**Benefits**:
-- ✅ **Cost Optimization**: 1 invocation for N destinations (70% cost reduction for 3+ regions)
-- ✅ **Simplified Management**: Single Lambda deployment for all destinations
-- ✅ **Partial Failure Handling**: HTTP 207 Multi-Status response with per-destination results
-- ✅ **Per-Destination Configuration**: Region-specific name mappings, KMS keys, and cross-account roles
+### Default Configuration Values
 
-**See Also**: [examples/multi-region.yaml](examples/multi-region.yaml) for complete working example
+The Lambda function uses these hardcoded defaults (no environment variables required):
 
----
+| Setting | Default | Override Via |
+|---------|---------|--------------|
+| Configuration secret name | `secrets-replicator/config/destinations` | Env var: `CONFIG_SECRET` |
+| Transformation mode | `auto` | Env var: `TRANSFORM_MODE` |
+| Log level | `INFO` | Env var: `LOG_LEVEL` |
+| CloudWatch metrics | `true` | Env var: `ENABLE_METRICS` |
+| Name mapping cache TTL | `300` seconds | Per-destination config |
+| Regex timeout | `5` seconds | Env var: `TIMEOUT_SECONDS` |
+| Max secret size | `65536` bytes | Env var: `MAX_SECRET_SIZE` |
 
-### Single-Destination Configuration (Legacy)
+**Example - Override defaults via environment variables** (optional):
 
-For single-destination replication, use legacy environment variables:
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DEST_REGION` | ✅ Yes | - | Destination AWS region |
-| `DEST_SECRET_NAMES` | No | - | Comma-separated list of name mapping secret names |
-| `DEST_SECRET_NAMES_CACHE_TTL` | No | `300` | Cache TTL for name mappings (seconds) |
-| `DEST_ACCOUNT_ROLE_ARN` | No | - | IAM role ARN in destination account (cross-account) |
-| `TRANSFORM_MODE` | No | `auto` | Transformation mode: `auto` (detect), `sed`, or `json` |
-| `SECRETS_FILTER` | No | - | Comma-separated list of filter secret names |
-| `SECRETS_FILTER_CACHE_TTL` | No | `300` | Cache TTL for filter configuration (seconds) |
-| `KMS_KEY_ID` | No | - | KMS key ID for destination secret encryption |
-| `MAX_SECRET_SIZE` | No | `65536` | Maximum secret size in bytes (64KB default) |
-| `ENABLE_METRICS` | No | `true` | Enable CloudWatch custom metrics |
-| `LOG_LEVEL` | No | `INFO` | Log level: DEBUG, INFO, WARN, ERROR |
-| `TIMEOUT_SECONDS` | No | `5` | Regex timeout in seconds |
-
-**Note**: When `Destinations` parameter is provided, it takes precedence over legacy single-destination parameters.
-
-### SAM Template Parameters
-
-Configure when deploying with SAM:
-
-```yaml
-# Multi-destination example
-Destinations: '[{"region":"us-east-1"},{"region":"eu-west-1"}]'
-SecretsFilter: secrets-replicator/filters/production
-EnableMetrics: true
-LogLevel: INFO
-Environment: prod
-
-# Single-destination example (legacy)
-DestinationRegion: us-west-2
-DestSecretNames: secrets-replicator/names/production
-SecretsFilter: secrets-replicator/filters/production
-EnableMetrics: true
+```bash
+# Update Lambda environment (optional - for advanced use cases)
+aws lambda update-function-configuration \
+  --function-name secrets-replicator \
+  --environment Variables='{
+    "CONFIG_SECRET":"my-custom-config/destinations",
+    "LOG_LEVEL":"DEBUG",
+    "ENABLE_METRICS":"false"
+  }' \
+  --region us-east-1
 ```
 
-**Note**: Transformation rules are stored in transformation secrets (see [Transformations](#transformations) section below), not in SAM parameters.
+### Benefits of Runtime Configuration
+
+- ✅ **No Redeployment**: Update destinations without rebuilding Lambda
+- ✅ **Zero Downtime**: Change configuration on-the-fly
+- ✅ **Encrypted at Rest**: All config stored in Secrets Manager with KMS
+- ✅ **Audit Trail**: CloudTrail logs all configuration changes
+- ✅ **Multi-Destination Support**: 1 invocation for N destinations (70% cost reduction for 3+ regions)
+- ✅ **Partial Failure Handling**: Per-destination success/failure tracking
 
 ---
 
@@ -401,26 +446,25 @@ EnableMetrics: true
 
 **Configuration**:
 
-1. Create transformation secret:
+1. Create configuration secret (destination: us-west-2):
+```bash
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Replication destinations" \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
+```
+
+2. (Optional) Create transformation secret for region swapping:
 ```bash
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/region-swap-sed \
   --description "Sed transformation for region swapping" \
-  --secret-string 's/us-east-1/us-west-2/g'
+  --secret-string 's/us-east-1/us-west-2/g' \
+  --region us-east-1
 ```
 
-2. Tag source secret with transformation name:
-```bash
-aws secretsmanager tag-resource \
-  --secret-id prod-db-credentials \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap-sed
-```
-
-3. Lambda environment variables:
-```bash
-DEST_REGION=us-west-2
-# TRANSFORM_MODE=auto  # Optional - auto-detects sed format
-```
+**Note**: Transformations are configured per-destination in the configuration secret or via destination-specific settings. See the Transformations section for details on applying transformations.
 
 **Destination Secret** (`us-west-2`):
 ```json
@@ -468,26 +512,24 @@ DEST_REGION=us-west-2
 
 **Setup**:
 ```bash
-# 1. Create transformation secret for account ID swap
+# 1. Create configuration secret with cross-account destination
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Cross-account replication destinations" \
+  --secret-string '[{
+    "region":"us-east-1",
+    "account_role_arn":"arn:aws:iam::222222222222:role/SecretsReplicatorDestRole"
+  }]' \
+  --region us-east-1
+
+# 2. (Optional) Create transformation secret for account ID swap
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/account-swap \
-  --secret-string 's/111111111111/222222222222/g'
-
-# 2. Tag source secret to use transformation
-aws secretsmanager tag-resource \
-  --secret-id app-credentials \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=account-swap
+  --secret-string 's/111111111111/222222222222/g' \
+  --region us-east-1
 ```
 
-**Configuration**:
-```bash
-SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:111111111111:secret:app-credentials
-DEST_SECRET_NAME=app-credentials
-DEST_REGION=us-east-1
-DEST_ACCOUNT_ROLE_ARN=arn:aws:iam::222222222222:role/SecretsReplicatorDestRole
-DEST_ROLE_EXTERNAL_ID=my-secure-external-id-12345
-# TRANSFORM_MODE=auto  # Optional - auto-detects sed format
-```
+**Note**: Transformations are configured per-destination. See the Transformations section for applying transformations.
 
 **Result**: Secrets replicated to application account with account-specific ARNs.
 
@@ -519,23 +561,34 @@ DEST_ROLE_EXTERNAL_ID=my-secure-external-id-12345
 
 **Setup**:
 ```bash
-# 1. Create transformation secret with JSON mapping
+# 1. Create configuration secret (same region replication)
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Environment promotion destinations" \
+  --secret-string '[{"region":"us-east-1"}]' \
+  --region us-east-1
+
+# 2. Create name mapping secret (dev → prod secret name)
+aws secretsmanager create-secret \
+  --name secrets-replicator/names/us-east-1 \
+  --description "Dev to Prod name mappings" \
+  --secret-string '{"app-config-dev":"app-config-prod"}' \
+  --region us-east-1
+
+# 3. Update configuration to use name mapping
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{"region":"us-east-1","secret_names":"secrets-replicator/names/us-east-1"}]' \
+  --region us-east-1
+
+# 4. (Optional) Create transformation secret with JSON mapping
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/dev-to-prod \
-  --secret-string '{"$.api_endpoint": "https://api.prod.example.com", "$.database": "prod-database", "$.log_level": "INFO", "$.cache_ttl": "3600"}'
-
-# 2. Tag source secret to use transformation
-aws secretsmanager tag-resource \
-  --secret-id app-config-dev \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=dev-to-prod
+  --secret-string '{"$.api_endpoint": "https://api.prod.example.com", "$.database": "prod-database", "$.log_level": "INFO", "$.cache_ttl": "3600"}' \
+  --region us-east-1
 ```
 
-**Configuration**:
-```bash
-SOURCE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:app-config-dev
-DEST_SECRET_NAME=app-config-prod
-DEST_REGION=us-east-1
-# TRANSFORM_MODE=auto  # Optional - can explicitly set to 'json' if needed
+**Note**: Transformations are configured per-destination. See the Transformations section for applying transformations.
 ```
 
 **Destination Secret** (Prod):
@@ -570,57 +623,41 @@ DEST_REGION=us-east-1
 
 **Setup**:
 
-1. Create region-specific transformation secrets:
-```bash
-# us-east-1 transformations
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/to-us-east-1 \
-  --secret-string 's/us-west-2/us-east-1/g'
-
-# eu-west-1 transformations
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/to-eu-west-1 \
-  --secret-string 's/us-west-2/eu-west-1/g'
-
-# ap-southeast-1 transformations
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/to-ap-southeast-1 \
-  --secret-string 's/us-west-2/ap-southeast-1/g'
-```
-
-2. Create filter configuration secret:
+1. Create configuration secret with multiple destinations:
 ```bash
 aws secretsmanager create-secret \
-  --name secrets-replicator/filters/multi-region \
-  --secret-string '{
-    "app/prod/db": {
-      "us-east-1": "secrets-replicator/transformations/to-us-east-1",
-      "eu-west-1": "secrets-replicator/transformations/to-eu-west-1",
-      "ap-southeast-1": "secrets-replicator/transformations/to-ap-southeast-1"
-    }
-  }'
-```
-
-3. Tag source secret:
-```bash
-aws secretsmanager tag-resource \
-  --secret-id app/prod/db \
-  --tags Key=SecretsReplicator:Replicate,Value=true
-```
-
-**Configuration** (Multi-Destination):
-```yaml
-# Deploy with multi-destination support
-sam deploy --parameter-overrides \
-  'Destinations=[
+  --name secrets-replicator/config/destinations \
+  --description "Multi-region replication destinations" \
+  --secret-string '[
     {"region":"us-east-1"},
     {"region":"eu-west-1"},
     {"region":"ap-southeast-1"}
   ]' \
-  SecretsFilter=secrets-replicator/filters/multi-region \
-  EnableMetrics=true \
-  LogLevel=INFO
+  --region us-west-2
 ```
+
+2. Create region-specific transformation secrets:
+```bash
+# us-east-1 transformations
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/to-us-east-1 \
+  --secret-string 's/us-west-2/us-east-1/g' \
+  --region us-west-2
+
+# eu-west-1 transformations
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/to-eu-west-1 \
+  --secret-string 's/us-west-2/eu-west-1/g' \
+  --region us-west-2
+
+# ap-southeast-1 transformations
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/to-ap-southeast-1 \
+  --secret-string 's/us-west-2/ap-southeast-1/g' \
+  --region us-west-2
+```
+
+**Note**: This example uses the same transformation for all destinations. For destination-specific transformations, use per-destination tags or name mappings.
 
 **Result**: Single Lambda invocation replicates to all 3 regions with region-specific values.
 
@@ -702,14 +739,9 @@ s/ak_east_/ak_west_/g
 s/arn:aws:s3:::app-data-us-east-1/arn:aws:s3:::app-data-us-west-2/g'
 ```
 
-2. Tag source secret:
-```bash
-aws secretsmanager tag-resource \
-  --secret-id app-config \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap-comprehensive
-```
+**Note**: Transformations are configured per-destination. See the Transformations section for applying transformations.
 
-3. Lambda environment variables:
+2. Lambda environment variables:
 ```bash
 DEST_REGION=us-west-2
 # TRANSFORM_MODE=auto  # Optional - auto-detects sed format
@@ -728,7 +760,7 @@ Secrets Replicator supports two replication modes:
 
 ### Pass-Through Replication
 
-If no transformation tag is present on the source secret, Secrets Replicator will perform a **pass-through replication** - copying the secret value exactly as-is to the destination without any modifications.
+By default, Secrets Replicator performs **pass-through replication** - copying the secret value exactly as-is to the destination without any modifications.
 
 **When to use pass-through**:
 - ✅ Simple disaster recovery (identical copies across regions)
@@ -740,11 +772,13 @@ If no transformation tag is present on the source secret, Secrets Replicator wil
 
 ```bash
 # No transformation secret needed!
-# Simply deploy Secrets Replicator and it will automatically replicate
-# any secrets WITHOUT the SecretsReplicator:TransformSecretName tag
+# Simply deploy Secrets Replicator and configure destinations via CONFIG_SECRET
 
-# Example: Deploy Lambda with destination region
-sam deploy --parameter-overrides DestinationRegion=us-west-2
+# Example: Create configuration secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
 
 # Update source secret - it will be replicated as-is
 aws secretsmanager put-secret-value \
@@ -773,8 +807,6 @@ aws secretsmanager get-secret-value \
 }
 ```
 
-**Note**: To enable transformations later, simply add the `SecretsReplicator:TransformSecretName` tag to the source secret.
-
 ### Transformation Secrets
 
 Transformation rules (sed scripts or JSON mappings) are stored in **transformation secrets** in AWS Secrets Manager with the prefix `secrets-replicator/transformations/`.
@@ -789,7 +821,7 @@ Transformation rules (sed scripts or JSON mappings) are stored in **transformati
 **Setup Process**:
 1. Create transformation secret with prefix `secrets-replicator/transformations/`
 2. Store sed script or JSON mapping in secret value
-3. Tag source secrets with `SecretsReplicator:TransformSecretName` pointing to transformation secret name (without prefix)
+3. Configure transformations per-destination in the configuration secret or via destination-specific settings
 
 ### Sed Transformations
 
@@ -819,12 +851,9 @@ s/old/new/gi
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/env-to-prod \
   --secret-string 's/dev/prod/g'
-
-# Tag source secret
-aws secretsmanager tag-resource \
-  --secret-id my-app-config \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=env-to-prod
 ```
+
+**Note**: Configure transformations per-destination. See Configuration section for details.
 
 **Region Swap**:
 ```bash
@@ -832,11 +861,6 @@ aws secretsmanager tag-resource \
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/region-swap \
   --secret-string 's/us-east-1/us-west-2/g'
-
-# Tag source secret
-aws secretsmanager tag-resource \
-  --secret-id db-credentials \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
 ```
 
 **Complex Multi-Line Transformations**:
@@ -857,11 +881,6 @@ s/:3000/:8080/g
 
 # Case-insensitive domain swap
 s/example\.local/example.com/gi'
-
-# Tag source secret
-aws secretsmanager tag-resource \
-  --secret-id app-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=comprehensive-transform
 ```
 
 ### JSON Transformations
@@ -903,108 +922,6 @@ Use JSONPath expressions to map specific fields.
   "$.servers[1].host": "server2.prod.example.com"
 }
 ```
-
-### Transformation Chains
-
-Apply multiple transformations sequentially by specifying a **comma-separated list** in the tag:
-
-```bash
-# Apply transformations in order: region-swap → env-promotion → scale-up
-aws secretsmanager tag-resource \
-  --secret-id my-app-config \
-  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up"
-```
-
-**Execution Flow**:
-```text
-Original Secret → region-swap → env-promotion → scale-up → Destination Secret
-```
-
-#### Chain Example 1: Region + Environment
-
-**Scenario**: Replicate from us-east-1 dev to us-west-2 prod
-
-```bash
-# Create region transformation
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/region-east-to-west \
-  --secret-string 's/us-east-1/us-west-2/g'
-
-# Create environment transformation
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/dev-to-prod \
-  --secret-string 's/dev/prod/g
-s/"log_level": "DEBUG"/"log_level": "INFO"/g'
-
-# Tag source secret with chain
-aws secretsmanager tag-resource \
-  --secret-id app-db-credentials \
-  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-east-to-west,dev-to-prod"
-```
-
-**Result**:
-```text
-Original:  {"host": "dev-db.us-east-1.rds.amazonaws.com", "log_level": "DEBUG"}
-Step 1:    {"host": "dev-db.us-west-2.rds.amazonaws.com", "log_level": "DEBUG"}
-Final:     {"host": "prod-db.us-west-2.rds.amazonaws.com", "log_level": "INFO"}
-```
-
-#### Chain Example 2: Mixed Sed + JSON
-
-**Scenario**: Apply broad regex changes, then precise JSON field updates
-
-```bash
-# Create sed transformation
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/region-swap \
-  --secret-string 's/us-east-1/us-west-2/g'
-
-# Create JSON transformation (auto-detected by format)
-aws secretsmanager create-secret \
-  --name secrets-replicator/transformations/config-overrides \
-  --secret-string '{
-  "transformations": [
-    {"path": "$.max_connections", "find": "100", "replace": "500"},
-    {"path": "$.timeout_seconds", "find": "30", "replace": "60"}
-  ]
-}'
-
-# Tag source secret with mixed chain
-aws secretsmanager tag-resource \
-  --secret-id app-config \
-  --tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,config-overrides"
-```
-
-**Auto-Detection**: Each transformation in the chain is automatically detected as sed or JSON based on content format.
-
-#### Chain Example 3: Whitespace in Tag Value
-
-Whitespace around commas is automatically trimmed:
-
-```bash
-# These are equivalent (quotes required for CLI):
---tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap,env-promotion,scale-up"
---tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap, env-promotion, scale-up"
---tags "Key=SecretsReplicator:TransformSecretName,Value=region-swap , env-promotion , scale-up"
-```
-
-#### Chain Best Practices
-
-1. **Always quote tag values with commas**: Required for AWS CLI parsing
-   ```bash
-   # ✅ Correct
-   --tags "Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3"
-
-   # ❌ Incorrect - CLI will fail
-   --tags Key=SecretsReplicator:TransformSecretName,Value=t1,t2,t3
-   ```
-
-2. **Order matters**: Transformations apply left-to-right
-3. **Keep chains short**: 2-3 transformations recommended
-4. **Test incrementally**: Test each transformation alone, then test the chain
-5. **Use descriptive names**: `Value=region-east-west,env-dev-prod` is self-documenting
-
-See [docs/transformations.md](docs/transformations.md) for comprehensive chain examples and use cases.
 
 ### Transformation Best Practices
 
@@ -1440,25 +1357,23 @@ ERROR: AccessDenied - User is not authorized to perform secretsmanager:GetSecret
 **Causes**:
 - Incorrect sed pattern
 - Wrong `TRANSFORM_MODE` (if explicitly set)
-- Source secret missing `SecretsReplicator:TransformSecretName` tag
+- Transformation not configured for destination
 - Transformation secret not found
-- Transformation secret name incorrect (includes prefix when it shouldn't)
+- Transformation secret name incorrect in configuration
 - Auto-detection failed to detect correct format
 
 **Solutions**:
 1. Test sed pattern locally: `echo "value" | sed 's/old/new/g'`
 2. Check CloudWatch logs for transformation details
-3. Verify source secret has correct tag:
-   ```bash
-   aws secretsmanager describe-secret --secret-id my-secret --query 'Tags'
-   ```
+3. Verify transformation is configured per-destination in CONFIG_SECRET
 4. Verify transformation secret exists:
    ```bash
    aws secretsmanager get-secret-value --secret-id secrets-replicator/transformations/my-transform
    ```
-5. Ensure tag value is just the name (NOT the full path):
-   - ✅ Good: `Value=region-swap`
-   - ❌ Bad: `Value=secrets-replicator/transformations/region-swap`
+5. Check configuration secret has correct transformation reference:
+   ```bash
+   aws secretsmanager get-secret-value --secret-id secrets-replicator/config/destinations
+   ```
 
 ---
 
