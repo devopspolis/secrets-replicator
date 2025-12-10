@@ -95,14 +95,18 @@ The Secrets Replicator is an event-driven AWS Lambda function that replicates AW
 
 **Environment Variables**:
 ```
-DEST_REGION                    # Required: Destination region (or comma-separated list)
-DEST_SECRET_NAME               # Optional: Override destination secret name
-DEST_ACCOUNT_ROLE_ARN          # Optional: Role ARN to assume for cross-account
-TRANSFORMATION_SECRET_PREFIX   # Optional: Prefix for transformation secrets (default: "secrets-replicator/transformations/")
+CONFIG_SECRET                  # Optional: Configuration secret name (default: "secrets-replicator/config/destinations")
+DEFAULT_SECRET_NAMES           # Optional: Default name mapping secret for all destinations
+DEFAULT_REGION                 # Optional: Default destination region (fallback if config not loaded)
+DEFAULT_ROLE_ARN               # Optional: Default cross-account role ARN for all destinations
+SECRET_NAMES_CACHE_TTL         # Optional: Cache TTL for name mappings in seconds (default: 300)
+KMS_KEY_ID                     # Optional: Default KMS key ID for destination encryption
 TRANSFORM_MODE                 # Optional: "auto", "sed" or "json" (default: "auto")
 LOG_LEVEL                      # Optional: DEBUG, INFO, WARN, ERROR (default: INFO)
 DLQ_ARN                        # Optional: DLQ for failed events
 ENABLE_METRICS                 # Optional: Enable CloudWatch custom metrics (default: true)
+TIMEOUT_SECONDS                # Optional: Regex timeout in seconds (default: 5)
+MAX_SECRET_SIZE                # Optional: Maximum secret size in bytes (default: 65536)
 ```
 
 #### Handler Flow
@@ -114,28 +118,32 @@ def lambda_handler(event, context):
        - Validate event structure
 
     2. Load configuration
-       - Determine destination(s) from environment or config
-       - Load transformation rules (sedfile)
+       - Load CONFIG_SECRET (secrets-replicator/config/destinations)
+       - Parse destination list from JSON array
+       - Apply environment variable defaults (DEFAULT_REGION, DEFAULT_ROLE_ARN, etc.)
 
-    3. Retrieve source secret
+    3. Filter source secret
+       - Check if secret should be replicated (hardcoded exclusions)
+       - Skip configuration secrets, transformation secrets, etc.
+
+    4. Retrieve source secret
        - Call secretsmanager:GetSecretValue
        - Handle SecretString vs SecretBinary
 
-    4. Apply transformations
-       - Execute sed-style regex replacements OR
-       - Apply JSON field mappings
-       - Validate transformed output
-
     5. Write to destination(s)
-       - For each destination:
-         a. Assume role if cross-account (STS)
-         b. Create Secrets Manager client for destination region
-         c. Check if secret exists
-         d. CreateSecret (if new) or PutSecretValue (if exists)
-         e. Optionally verify idempotency
+       - For each destination in configuration:
+         a. Load name mapping (if destination.secret_names specified)
+         b. Determine destination secret name (mapped or pass-through)
+         c. Load transformation rules (if specified for destination)
+         d. Apply transformations to secret value (if configured)
+         e. Assume role if cross-account (STS via destination.account_role_arn)
+         f. Create Secrets Manager client for destination region
+         g. Check if secret exists
+         h. CreateSecret (if new) or PutSecretValue (if exists)
+         i. Apply KMS encryption (if destination.kms_key_id specified)
 
     6. Emit metrics and logs
-       - CloudWatch custom metrics (success/failure counts)
+       - CloudWatch custom metrics (success/failure counts per destination)
        - Structured logs (metadata only, no plaintext)
 
     7. Error handling
@@ -313,7 +321,31 @@ class SecretsManagerClient:
                 )
 ```
 
-### 5. Transformation Secrets Storage
+### 5. Configuration and Destination Management
+
+**Runtime Configuration**: All replication destinations and transformations are configured via AWS Secrets Manager at runtime.
+
+**Configuration Secret**: `secrets-replicator/config/destinations`
+
+**Format** (JSON array):
+```json
+[
+  {
+    "region": "us-west-2",
+    "account_role_arn": null,
+    "secret_names": "secrets-replicator/names/us-west-2",
+    "kms_key_id": null
+  },
+  {
+    "region": "us-east-1",
+    "account_role_arn": "arn:aws:iam::999888777666:role/SecretReplicatorRole",
+    "secret_names": "secrets-replicator/names/us-east-1",
+    "kms_key_id": "arn:aws:kms:us-east-1:999888777666:key/12345678-1234-1234-1234-123456789012"
+  }
+]
+```
+
+**Transformation Secrets Storage** (Optional - Per-Destination):
 
 **Location**: AWS Secrets Manager with prefix `secrets-replicator/transformations/`
 
@@ -328,34 +360,42 @@ class SecretsManagerClient:
 
 **Setup**:
 ```bash
-# Create transformation secret with sed script
+# Create configuration secret with destinations
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --secret-string '[{"region":"us-west-2"}]'
+
+# Create transformation secret (if needed for a destination)
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/region-swap \
   --secret-string 's/us-east-1/us-west-2/g'
 
-# Tag source secret to use this transformation
-aws secretsmanager tag-resource \
-  --secret-id my-source-secret \
-  --tags Key=SecretsReplicator:TransformSecretName,Value=region-swap
+# Create name mapping secret (if custom names needed)
+aws secretsmanager create-secret \
+  --name secrets-replicator/names/us-west-2 \
+  --secret-string '{"source-secret-name":"destination-secret-name"}'
 ```
 
-**Lambda IAM Permission**:
+**Lambda IAM Permissions**:
 ```json
 {
   "Effect": "Allow",
   "Action": [
-    "secretsmanager:GetSecretValue",
-    "secretsmanager:DescribeSecret"
+    "secretsmanager:GetSecretValue"
   ],
-  "Resource": "arn:aws:secretsmanager:*:*:secret:secrets-replicator/transformations/*"
+  "Resource": [
+    "arn:aws:secretsmanager:*:*:secret:secrets-replicator/config/*",
+    "arn:aws:secretsmanager:*:*:secret:secrets-replicator/transformations/*",
+    "arn:aws:secretsmanager:*:*:secret:secrets-replicator/names/*"
+  ]
 }
 ```
 
 **Key Features**:
-- **Tag-based routing**: Source secrets specify which transformation to use via tags
-- **Automatic exclusion**: Transformation secrets are never replicated (both source and destination filtering)
+- **Per-destination configuration**: Each destination specifies its own transformation and name mapping secrets
+- **Automatic exclusion**: Configuration secrets are never replicated (hardcoded filtering)
 - **Version rollback**: Use `AWSPREVIOUS` version stage to rollback transformations
-- **Multi-environment**: Different transformation secrets for dev→qa, qa→prod, etc.
+- **Multi-environment**: Different configurations for dev, qa, prod environments
 
 ## IAM Permissions
 
@@ -646,10 +686,11 @@ ReplicationFailureAlarm:
    }
    ```
 
-2. **Tag-based Filtering**:
-   - Tag source secrets with `replication:enabled=true`
-   - Filter EventBridge rule by tag
-   - Don't tag destination secrets
+2. **Hardcoded Exclusions** (Implemented):
+   - Configuration secrets (`secrets-replicator/config/*`) automatically excluded
+   - Transformation secrets (`secrets-replicator/transformations/*`) automatically excluded
+   - Name mapping secrets (`secrets-replicator/names/*`) automatically excluded
+   - Filter secrets (`secrets-replicator/filters/*`) automatically excluded
 
 3. **Version Comparison**:
    - Store source version ID in destination secret metadata
