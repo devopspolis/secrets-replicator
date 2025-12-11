@@ -1,5 +1,21 @@
 name: Release to QA
 
+# Standard Release Workflow:
+# 1. Develop & Test: Create PR → ci.yml runs automatically (lint, test, SAM validation, security)
+# 2. Merge: After CI passes, merge PR to main
+# 3. Release: Create GitHub Release via UI (https://github.com/devopspolis/secrets-replicator/releases/new)
+#    - Tag format: v1.0.0
+#    - GitHub auto-generates changelog from commits/PRs
+#    - Click "Publish release" → this workflow auto-triggers
+# 4. Deploy: This workflow builds, packages, and deploys to QA environment
+# 5. Verify: Test functionality in QA environment
+# 6. Promote: When ready, use deploy-release-to-prod.yml workflow
+#
+# Manual Deployment (without creating a release):
+# - Use workflow_dispatch with version input
+# - Set create_tag=true to create git tag automatically
+# - Useful for re-deployments or hotfixes
+
 on:
   release:
     types: [published]
@@ -17,7 +33,7 @@ on:
 
 permissions:
   id-token: write
-  contents: write  # Needed to create tags
+  contents: write
   actions: read
 
 jobs:
@@ -31,39 +47,66 @@ jobs:
       s3_uri: ${{ steps.set_s3.outputs.s3_uri }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Create git tag if workflow_dispatch
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.create_tag == 'true'
+      - name: Determine git ref to checkout
+        id: git_ref
         run: |
-          VERSION="${{ github.event.inputs.version }}"
-
-          # Ensure version has 'v' prefix for tag
-          if [[ ! "$VERSION" =~ ^v ]]; then
-            TAG_NAME="v${VERSION}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # GitHub Release event - use the release tag
+            GIT_REF="${{ github.event.release.tag_name }}"
+            echo "Checking out from GitHub Release: ${GIT_REF}"
           else
-            TAG_NAME="${VERSION}"
+            # Manual trigger - normalize version to tag format
+            VERSION="${{ github.event.inputs.version }}"
+            # Ensure it has 'v' prefix for git tag
+            if [[ ! "$VERSION" =~ ^v ]]; then
+              GIT_REF="v${VERSION}"
+            else
+              GIT_REF="${VERSION}"
+            fi
+            echo "Checking out version: ${GIT_REF}"
+          fi
+          echo "git_ref=${GIT_REF}" >> $GITHUB_OUTPUT
+
+      - name: Checkout code at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.git_ref.outputs.git_ref }}
+          fetch-depth: 0  # Full history needed for potential git operations
+
+      - name: Create or verify tag
+        run: |
+          TAG_REF="${{ steps.git_ref.outputs.git_ref }}"
+          CREATE_TAG="${{ github.event.inputs.create_tag }}"
+
+          # For release events, tag always exists (GitHub creates it)
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "✅ Tag ${TAG_REF} exists (from GitHub Release)" >> $GITHUB_STEP_SUMMARY
+            exit 0
           fi
 
-          echo "### Creating Git Tag" >> $GITHUB_STEP_SUMMARY
-          echo "**Tag:** \`${TAG_NAME}\`" >> $GITHUB_STEP_SUMMARY
-
-          # Check if tag already exists
-          if git rev-parse "${TAG_NAME}" >/dev/null 2>&1; then
-            echo "✅ Tag ${TAG_NAME} already exists" >> $GITHUB_STEP_SUMMARY
-            echo "Tag already exists: ${TAG_NAME}"
+          # For manual triggers, check if tag exists
+          if git rev-parse "${TAG_REF}" >/dev/null 2>&1; then
+            echo "✅ Tag ${TAG_REF} already exists" >> $GITHUB_STEP_SUMMARY
           else
-            # Configure git
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+            # Tag doesn't exist
+            if [ "${CREATE_TAG}" = "true" ]; then
+              echo "### Creating Tag ${TAG_REF}" >> $GITHUB_STEP_SUMMARY
 
-            # Create and push tag
-            git tag -a "${TAG_NAME}" -m "Release ${TAG_NAME} for QA deployment"
-            git push origin "${TAG_NAME}"
+              git config user.name "github-actions[bot]"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              git tag -a "${TAG_REF}" -m "Release ${TAG_REF} for QA deployment"
+              git push origin "${TAG_REF}"
 
-            echo "✅ Created and pushed tag ${TAG_NAME}" >> $GITHUB_STEP_SUMMARY
-            echo "Created tag: ${TAG_NAME}"
+              echo "✅ Tag ${TAG_REF} created" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ ERROR: Git tag ${TAG_REF} does not exist!" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "**Options:**" >> $GITHUB_STEP_SUMMARY
+              echo "1. Re-run with 'create_tag' set to true" >> $GITHUB_STEP_SUMMARY
+              echo "2. Create a GitHub Release first:" >> $GITHUB_STEP_SUMMARY
+              echo "   https://github.com/${{ github.repository }}/releases/new" >> $GITHUB_STEP_SUMMARY
+              exit 1
+            fi
           fi
 
       - name: Set environment
@@ -233,7 +276,11 @@ jobs:
   approval:
     name: Approval
     needs: [setup, build-and-package]
-    uses: devopspolis/github-actions/.github/workflows/approval.yml@main
+    runs-on: ubuntu-latest
+    environment: approval
+    steps:
+      - name: Approval
+        run: echo "Approved"
 
   deploy-to-qa:
     name: Deploy to QA

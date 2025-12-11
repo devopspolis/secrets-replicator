@@ -67,7 +67,7 @@ jobs:
   promote-from-qa:
     name: Promote Package from QA
     needs: setup
-    uses: devopspolis/github-actions/.github/workflows/promote-s3-artifact.yml@main
+    uses: devopspolis/promote-s3-artifact.yml@main
     with:
       environment: qa
       s3_uri: ${{ needs.setup.outputs.s3_uri }}
@@ -78,7 +78,11 @@ jobs:
   approval:
     name: Approval
     needs: [setup, promote-from-qa]
-    uses: devopspolis/github-actions/.github/workflows/approval.yml@main
+    runs-on: ubuntu-latest
+    environment: approval
+    steps:
+      - name: Approval
+        run: echo "Approved"
 
   deploy-to-prod:
     name: Deploy to Production
