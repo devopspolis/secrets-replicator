@@ -1,0 +1,205 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationManagement",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateChangeSet",
+        "cloudformation:DeleteChangeSet",
+        "cloudformation:DescribeChangeSet",
+        "cloudformation:ExecuteChangeSet",
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:GetTemplate",
+        "cloudformation:GetTemplateSummary",
+        "cloudformation:ListStackResources",
+        "cloudformation:ValidateTemplate"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:737549531315:stack/secrets-replicator-dev/*",
+        "arn:aws:cloudformation:*:737549531315:stack/secrets-replicator-qa/*",
+        "arn:aws:cloudformation:*:737549531315:stack/secrets-replicator-prod/*",
+        "arn:aws:cloudformation:*:737549531315:stack/aws-sam-cli-managed-default/*"
+      ]
+    },
+    {
+      "Sid": "CloudFormationSAMTransform",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:CreateChangeSet"
+      ],
+      "Resource": [
+        "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"
+      ]
+    },
+    {
+      "Sid": "S3ManagementForSAM",
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:GetBucketLocation",
+        "s3:GetBucketPolicy",
+        "s3:PutBucketPolicy",
+        "s3:GetBucketVersioning",
+        "s3:PutBucketVersioning",
+        "s3:GetBucketTagging",
+        "s3:PutBucketTagging",
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:ListBucket",
+        "s3:DeleteObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::aws-sam-cli-managed-default-*",
+        "arn:aws:s3:::aws-sam-cli-managed-default-*/*",
+        "arn:aws:s3:::secrets-replicator-builds",
+        "arn:aws:s3:::secrets-replicator-builds/*"
+      ]
+    },
+    {
+      "Sid": "IAMRoleManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:PassRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:PutRolePolicy",
+        "iam:DeleteRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::737549531315:role/secrets-replicator-dev-*",
+        "arn:aws:iam::737549531315:role/secrets-replicator-qa-*",
+        "arn:aws:iam::737549531315:role/secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "LambdaManagement",
+      "Effect": "Allow",
+      "Action": [
+        "lambda:CreateFunction",
+        "lambda:DeleteFunction",
+        "lambda:GetFunction",
+        "lambda:GetFunctionConfiguration",
+        "lambda:UpdateFunctionCode",
+        "lambda:UpdateFunctionConfiguration",
+        "lambda:AddPermission",
+        "lambda:RemovePermission",
+        "lambda:TagResource",
+        "lambda:UntagResource",
+        "lambda:PublishVersion",
+        "lambda:ListTags"
+      ],
+      "Resource": [
+        "arn:aws:lambda:*:737549531315:function:secrets-replicator-dev-*",
+        "arn:aws:lambda:*:737549531315:function:secrets-replicator-qa-*",
+        "arn:aws:lambda:*:737549531315:function:secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "EventBridgeManagement",
+      "Effect": "Allow",
+      "Action": [
+        "events:PutRule",
+        "events:DeleteRule",
+        "events:DescribeRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:TagResource",
+        "events:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:events:*:737549531315:rule/secrets-replicator-dev-*",
+        "arn:aws:events:*:737549531315:rule/secrets-replicator-qa-*",
+        "arn:aws:events:*:737549531315:rule/secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "SQSManagement",
+      "Effect": "Allow",
+      "Action": [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue",
+        "sqs:GetQueueUrl"
+      ],
+      "Resource": [
+        "arn:aws:sqs:*:737549531315:secrets-replicator-dev-*",
+        "arn:aws:sqs:*:737549531315:secrets-replicator-qa-*",
+        "arn:aws:sqs:*:737549531315:secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "SNSManagement",
+      "Effect": "Allow",
+      "Action": [
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:SetTopicAttributes",
+        "sns:Subscribe",
+        "sns:Unsubscribe",
+        "sns:TagResource",
+        "sns:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:sns:*:737549531315:secrets-replicator-dev-*",
+        "arn:aws:sns:*:737549531315:secrets-replicator-qa-*",
+        "arn:aws:sns:*:737549531315:secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchManagement",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms",
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:TagResource",
+        "cloudwatch:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:cloudwatch:*:737549531315:alarm:secrets-replicator-dev-*",
+        "arn:aws:cloudwatch:*:737549531315:alarm:secrets-replicator-qa-*",
+        "arn:aws:cloudwatch:*:737549531315:alarm:secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "LogsManagement",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:DeleteLogGroup",
+        "logs:DescribeLogGroups",
+        "logs:PutRetentionPolicy",
+        "logs:TagLogGroup",
+        "logs:UntagLogGroup",
+        "logs:TagResource",
+        "logs:UntagResource"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:737549531315:log-group:/aws/lambda/secrets-replicator-dev-*",
+        "arn:aws:logs:*:737549531315:log-group:/aws/lambda/secrets-replicator-qa-*",
+        "arn:aws:logs:*:737549531315:log-group:/aws/lambda/secrets-replicator-prod-*"
+      ]
+    },
+    {
+      "Sid": "STSGetCallerIdentity",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
