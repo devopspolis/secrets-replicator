@@ -14,7 +14,9 @@ from src.transformer import (
     TransformationError,
     InvalidRegexError,
     InvalidJsonError,
-    RegexTimeoutError
+    RegexTimeoutError,
+    expand_variables,
+    VariableExpansionError
 )
 
 
@@ -621,3 +623,213 @@ class TestParseTransformNames:
         from src.transformer import parse_transform_names
         names = parse_transform_names('region-us-east-to-west,account-dev-to-prod,json-overrides')
         assert names == ['region-us-east-to-west', 'account-dev-to-prod', 'json-overrides']
+
+
+class TestExpandVariables:
+    """Test variable expansion functionality"""
+
+    def test_single_variable_substitution(self):
+        """Test substituting a single variable"""
+        context = {'REGION': 'us-east-1'}
+        result = expand_variables('s/us-west-2/${REGION}/g', context)
+        assert result == 's/us-west-2/us-east-1/g'
+
+    def test_multiple_variables_same_string(self):
+        """Test substituting multiple variables in one string"""
+        context = {'REGION': 'us-east-1', 'ENV': 'prod', 'ACCOUNT': '123456789012'}
+        result = expand_variables('${ENV}-${REGION}-${ACCOUNT}', context)
+        assert result == 'prod-us-east-1-123456789012'
+
+    def test_repeated_variable(self):
+        """Test same variable appearing multiple times"""
+        context = {'REGION': 'us-west-2'}
+        result = expand_variables('${REGION} to ${REGION} replication', context)
+        assert result == 'us-west-2 to us-west-2 replication'
+
+    def test_variable_in_sed_pattern(self):
+        """Test variable expansion in sed pattern"""
+        context = {'SOURCE_REGION': 'us-west-2', 'DEST_REGION': 'us-east-1'}
+        result = expand_variables('s/${SOURCE_REGION}/${DEST_REGION}/g', context)
+        assert result == 's/us-west-2/us-east-1/g'
+
+    def test_variable_with_numbers(self):
+        """Test variable names with numbers"""
+        context = {'DB1_HOST': 'db1.example.com', 'DB2_HOST': 'db2.example.com'}
+        result = expand_variables('s/${DB1_HOST}/${DB2_HOST}/g', context)
+        assert result == 's/db1.example.com/db2.example.com/g'
+
+    def test_variable_with_underscores(self):
+        """Test variable names with underscores"""
+        context = {'SOURCE_ACCOUNT_ID': '111111111111', 'DEST_ACCOUNT_ID': '222222222222'}
+        result = expand_variables('${SOURCE_ACCOUNT_ID} to ${DEST_ACCOUNT_ID}', context)
+        assert result == '111111111111 to 222222222222'
+
+    def test_no_variables_passthrough(self):
+        """Test text without variables passes through unchanged"""
+        context = {'REGION': 'us-east-1'}
+        text = 's/old-value/new-value/g'
+        result = expand_variables(text, context)
+        assert result == text
+
+    def test_empty_string(self):
+        """Test empty string returns empty string"""
+        context = {'REGION': 'us-east-1'}
+        result = expand_variables('', context)
+        assert result == ''
+
+    def test_empty_context(self):
+        """Test text with no variables and empty context"""
+        context = {}
+        text = 's/old/new/g'
+        result = expand_variables(text, context)
+        assert result == text
+
+    def test_undefined_variable_raises_error(self):
+        """Test undefined variable raises VariableExpansionError"""
+        context = {'REGION': 'us-east-1'}
+        with pytest.raises(VariableExpansionError) as exc_info:
+            expand_variables('s/old/${UNDEFINED}/g', context)
+
+        error_msg = str(exc_info.value)
+        assert 'UNDEFINED' in error_msg
+        assert 'Available variables' in error_msg
+        assert 'REGION' in error_msg
+
+    def test_undefined_variable_with_empty_context(self):
+        """Test undefined variable with empty context shows (none)"""
+        context = {}
+        with pytest.raises(VariableExpansionError) as exc_info:
+            expand_variables('${REGION}', context)
+
+        error_msg = str(exc_info.value)
+        assert 'REGION' in error_msg
+        assert '(none)' in error_msg
+
+    def test_multiple_undefined_variables(self):
+        """Test error message for first undefined variable encountered"""
+        context = {'REGION': 'us-east-1'}
+        # Python regex will find UNDEFINED1 first (left to right)
+        with pytest.raises(VariableExpansionError) as exc_info:
+            expand_variables('${UNDEFINED1}-${UNDEFINED2}', context)
+
+        error_msg = str(exc_info.value)
+        assert 'UNDEFINED1' in error_msg
+
+    def test_variable_name_must_start_with_letter_or_underscore(self):
+        """Test variable names starting with numbers are not matched"""
+        context = {'1INVALID': 'value'}
+        # ${1INVALID} won't be matched by the pattern, so it passes through
+        text = '${1INVALID}'
+        result = expand_variables(text, context)
+        assert result == '${1INVALID}'  # Not expanded
+
+    def test_variable_must_be_uppercase(self):
+        """Test lowercase variable names are not matched"""
+        context = {'region': 'us-east-1'}
+        # ${region} won't be matched (pattern requires uppercase)
+        text = '${region}'
+        result = expand_variables(text, context)
+        assert result == '${region}'  # Not expanded
+
+    def test_mixed_case_not_matched(self):
+        """Test mixed-case variable names are not matched"""
+        context = {'Region': 'us-east-1'}
+        text = '${Region}'
+        result = expand_variables(text, context)
+        assert result == '${Region}'  # Not expanded
+
+    def test_literal_dollar_brace_not_variable(self):
+        """Test that malformed syntax is not treated as variable"""
+        context = {'REGION': 'us-east-1'}
+        # Missing closing brace
+        text = '${REGION'
+        result = expand_variables(text, context)
+        assert result == '${REGION'  # Not expanded
+
+    def test_variable_in_json_transformation(self):
+        """Test variable expansion in JSON transformation content"""
+        context = {'REGION': 'us-east-1', 'ACCOUNT': '123456789012'}
+        json_content = '''
+        {
+          "transformations": [
+            {
+              "path": "$.database.host",
+              "find": "db.us-west-2",
+              "replace": "db.${REGION}"
+            },
+            {
+              "path": "$.account_id",
+              "find": "999999999999",
+              "replace": "${ACCOUNT}"
+            }
+          ]
+        }
+        '''
+        result = expand_variables(json_content, context)
+        assert 'db.us-east-1' in result
+        assert '123456789012' in result
+        assert '${REGION}' not in result
+        assert '${ACCOUNT}' not in result
+
+    def test_variable_with_special_regex_chars(self):
+        """Test variable values containing regex special characters"""
+        context = {'PATTERN': 'us-east-1.amazonaws.com'}
+        result = expand_variables('s/old/${PATTERN}/g', context)
+        assert result == 's/old/us-east-1.amazonaws.com/g'
+
+    def test_custom_variables_override(self):
+        """Test custom variables from context"""
+        context = {
+            'REGION': 'us-east-1',
+            'CUSTOM_VAR': 'my-custom-value',
+            'APP_NAME': 'my-app'
+        }
+        result = expand_variables('${APP_NAME} in ${REGION}: ${CUSTOM_VAR}', context)
+        assert result == 'my-app in us-east-1: my-custom-value'
+
+    def test_complex_sed_with_multiple_variables(self):
+        """Test complex sed pattern with multiple variable substitutions"""
+        context = {
+            'SOURCE_REGION': 'us-west-2',
+            'DEST_REGION': 'us-east-1',
+            'SOURCE_ENV': 'dev',
+            'DEST_ENV': 'prod'
+        }
+        sed_pattern = 's/${SOURCE_REGION}/${DEST_REGION}/g\ns/${SOURCE_ENV}/${DEST_ENV}/gi'
+        result = expand_variables(sed_pattern, context)
+        expected = 's/us-west-2/us-east-1/g\ns/dev/prod/gi'
+        assert result == expected
+
+    def test_whitespace_preservation(self):
+        """Test that whitespace is preserved during expansion"""
+        context = {'REGION': 'us-east-1'}
+        text = '  ${REGION}  \n  ${REGION}  '
+        result = expand_variables(text, context)
+        assert result == '  us-east-1  \n  us-east-1  '
+
+    def test_variable_value_empty_string(self):
+        """Test variable with empty string value"""
+        context = {'EMPTY': ''}
+        result = expand_variables('prefix-${EMPTY}-suffix', context)
+        assert result == 'prefix--suffix'
+
+    def test_all_core_variables(self):
+        """Test expansion with all core variables that would be available"""
+        context = {
+            'REGION': 'us-east-1',
+            'SOURCE_REGION': 'us-west-2',
+            'SECRET_NAME': 'my-app/db-config',
+            'DEST_SECRET_NAME': 'my-app/db-config-east',
+            'ACCOUNT_ID': '123456789012',
+            'SOURCE_ACCOUNT_ID': '999999999999'
+        }
+        text = '''Source: ${SOURCE_REGION}/${SOURCE_ACCOUNT_ID}/${SECRET_NAME}
+Destination: ${REGION}/${ACCOUNT_ID}/${DEST_SECRET_NAME}'''
+        result = expand_variables(text, context)
+
+        assert 'us-west-2' in result
+        assert 'us-east-1' in result
+        assert '999999999999' in result
+        assert '123456789012' in result
+        assert 'my-app/db-config' in result
+        assert 'my-app/db-config-east' in result

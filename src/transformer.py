@@ -4,6 +4,8 @@ Transformation engine for secret values.
 Supports two transformation modes:
 1. Sed-style regex replacements (line-by-line)
 2. JSON field mappings (JSONPath-based)
+
+Also supports variable expansion in transformation rules using ${VARIABLE} syntax.
 """
 
 import json
@@ -17,6 +19,11 @@ from jsonpath_ng import parse as jsonpath_parse
 # Exceptions
 class TransformationError(Exception):
     """Raised when transformation fails"""
+    pass
+
+
+class VariableExpansionError(TransformationError):
+    """Raised when variable expansion fails"""
     pass
 
 
@@ -131,6 +138,57 @@ def parse_transform_names(tag_value: str) -> List[str]:
 
     # Filter out empty strings
     return [name for name in names if name]
+
+
+# Variable expansion
+def expand_variables(text: str, context: Dict[str, str]) -> str:
+    """
+    Expand ${VARIABLE} references in text using context values.
+
+    Variables are substituted with their values from the context dictionary.
+    Variable names must match the pattern: uppercase letters, numbers, and underscores.
+
+    Args:
+        text: Text containing variable references (e.g., "s/old/${REGION}/g")
+        context: Dict mapping variable names to values
+
+    Returns:
+        Text with variables expanded
+
+    Raises:
+        VariableExpansionError: If variable is undefined or invalid
+
+    Examples:
+        >>> context = {'REGION': 'us-east-1', 'ENV': 'prod'}
+        >>> expand_variables('s/us-west-2/${REGION}/g', context)
+        's/us-west-2/us-east-1/g'
+        >>> expand_variables('environment=${ENV}', context)
+        'environment=prod'
+        >>> expand_variables('${REGION}-${ENV}', context)
+        'us-east-1-prod'
+        >>> expand_variables('no variables', context)
+        'no variables'
+    """
+    # Pattern matches ${VARIABLE_NAME} where VARIABLE_NAME is uppercase letters, numbers, and underscores
+    # Must start with a letter or underscore
+    pattern = re.compile(r'\$\{([A-Z_][A-Z0-9_]*)\}')
+
+    def replace_variable(match):
+        var_name = match.group(1)
+        if var_name not in context:
+            available = ', '.join(sorted(context.keys())) if context else '(none)'
+            raise VariableExpansionError(
+                f"Undefined variable: ${{{var_name}}}. "
+                f"Available variables: {available}"
+            )
+        return context[var_name]
+
+    try:
+        return pattern.sub(replace_variable, text)
+    except VariableExpansionError:
+        raise
+    except Exception as e:
+        raise VariableExpansionError(f"Variable expansion failed: {e}") from e
 
 
 # Sed-style transformations

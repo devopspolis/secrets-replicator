@@ -517,6 +517,337 @@ ERROR: Transformation failed at step 2/3 (env-promotion): Invalid JSONPath expre
 
 ---
 
+## Variable Expansion
+
+**NEW FEATURE**: Transformation secrets now support variable references using `${VARIABLE}` syntax that are expanded dynamically for each destination.
+
+### Overview
+
+Variable expansion allows a single transformation secret to work across multiple destinations by substituting runtime values. Instead of creating separate transformation secrets for each region or environment, use variables to make transformations adaptive.
+
+### Why Variable Expansion?
+
+**Without Variables** (old approach):
+```bash
+# ❌ Need separate transformation secrets for each destination
+secrets-replicator/transformations/us-east-1-to-us-west-2
+secrets-replicator/transformations/us-east-1-to-eu-west-1
+secrets-replicator/transformations/us-east-1-to-ap-south-1
+```
+
+**With Variables** (new approach):
+```bash
+# ✅ One transformation secret for all destinations
+secrets-replicator/transformations/region-swap
+# Content: s/us-east-1/${REGION}/g
+```
+
+### Available Variables
+
+| Variable | Description | Example Value |
+|----------|-------------|---------------|
+| `${REGION}` | Destination region | `us-west-2` |
+| `${SOURCE_REGION}` | Source region | `us-east-1` |
+| `${SECRET_NAME}` | Source secret name | `my-app/config` |
+| `${DEST_SECRET_NAME}` | Destination secret name (after name mapping) | `my-app/config-west` |
+| `${ACCOUNT_ID}` | Destination AWS account ID | `123456789012` |
+| `${SOURCE_ACCOUNT_ID}` | Source AWS account ID | `999999999999` |
+
+### Custom Variables
+
+Define custom variables per-destination in the configuration secret:
+
+```json
+{
+  "destinations": [
+    {
+      "region": "us-west-2",
+      "variables": {
+        "ENV": "production",
+        "DB_INSTANCE": "prod-db-west",
+        "API_DOMAIN": "api.prod.west.example.com"
+      }
+    },
+    {
+      "region": "eu-west-1",
+      "variables": {
+        "ENV": "production",
+        "DB_INSTANCE": "prod-db-eu",
+        "API_DOMAIN": "api.prod.eu.example.com"
+      }
+    }
+  ]
+}
+```
+
+### Sed Transformation Examples
+
+#### Example: Adaptive Region Swapping
+
+**Transformation Secret** (`secrets-replicator/transformations/region-swap`):
+```bash
+# AWS Region endpoints
+s/${SOURCE_REGION}\.amazonaws\.com/${REGION}.amazonaws.com/g
+
+# RDS endpoints
+s/rds\.${SOURCE_REGION}/rds.${REGION}/g
+
+# S3 bucket URLs
+s/s3\.${SOURCE_REGION}\.amazonaws/s3.${REGION}.amazonaws/g
+
+# SNS topic ARNs
+s/arn:aws:sns:${SOURCE_REGION}/arn:aws:sns:${REGION}/g
+```
+
+**Configuration Secret** (`secrets-replicator/config/destinations`):
+```json
+[
+  {"region": "us-west-2"},
+  {"region": "eu-west-1"},
+  {"region": "ap-south-1"}
+]
+```
+
+**How It Works**:
+- For `us-west-2`: `${REGION}` → `us-west-2`, `${SOURCE_REGION}` → `us-east-1`
+- For `eu-west-1`: `${REGION}` → `eu-west-1`, `${SOURCE_REGION}` → `us-east-1`
+- For `ap-south-1`: `${REGION}` → `ap-south-1`, `${SOURCE_REGION}` → `us-east-1`
+
+#### Example: Custom Variables for Multi-Environment
+
+**Transformation Secret**:
+```bash
+s/dev-${ENV}-/g
+s/dev\./${ENV}./g
+s/dev-db\./${DB_INSTANCE}./g
+```
+
+**Configuration**:
+```json
+[
+  {
+    "region": "us-west-2",
+    "variables": {
+      "ENV": "prod",
+      "DB_INSTANCE": "prod-db-west"
+    }
+  },
+  {
+    "region": "eu-west-1",
+    "variables": {
+      "ENV": "prod",
+      "DB_INSTANCE": "prod-db-eu"
+    }
+  }
+]
+```
+
+### JSON Transformation Examples
+
+#### Example: Region-Aware JSON Transformation
+
+**Transformation Secret** (`secrets-replicator/transformations/json-region-swap`):
+```json
+{
+  "transformations": [
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.database.host",
+      "find": "db.us-east-1.amazonaws.com",
+      "replace": "db.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.metadata.source_region",
+      "find": "unknown",
+      "replace": "${SOURCE_REGION}"
+    }
+  ]
+}
+```
+
+**Source Secret**:
+```json
+{
+  "database": {
+    "region": "us-east-1",
+    "host": "db.us-east-1.amazonaws.com"
+  },
+  "metadata": {
+    "source_region": "unknown"
+  }
+}
+```
+
+**Result in us-west-2**:
+```json
+{
+  "database": {
+    "region": "us-west-2",
+    "host": "db.us-west-2.amazonaws.com"
+  },
+  "metadata": {
+    "source_region": "us-east-1"
+  }
+}
+```
+
+### Syntax Rules
+
+1. **Variable Format**: `${VARIABLE_NAME}` (uppercase letters, numbers, underscores only)
+2. **Case Sensitive**: Variables are uppercase by convention
+3. **Undefined Variables**: Fail with descriptive error message
+4. **No Escaping**: Literal `${...}` not currently supported (use custom variables as workaround)
+5. **Expansion Timing**: Variables expanded **per-destination** before transformation rules are parsed
+
+### Variable Precedence
+
+When the same variable is defined in multiple places:
+
+1. **Custom variables** (in `destination.variables`) - highest priority
+2. **Core variables** (REGION, SOURCE_REGION, etc.) - default values
+3. **Undefined** - error
+
+Custom variables can override core variables if needed (advanced use case).
+
+### Testing Variable Expansion
+
+#### Test Locally Before Deployment
+
+```bash
+# Manual variable substitution test
+echo 's/${REGION}/us-west-2/g' | sed 's/\${REGION}/us-west-2/g'
+# Output: s/us-west-2/us-west-2/g
+
+# Test with actual secret value
+aws secretsmanager get-secret-value \
+  --secret-id my-secret \
+  --query SecretString \
+  --output text | sed 's/us-east-1/us-west-2/g'
+```
+
+#### Create Test Configuration
+
+```bash
+# Create test transformation with variables
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/test-variables \
+  --secret-string 's/${SOURCE_REGION}/${REGION}/g' \
+  --region us-east-1
+
+# Create test destination config
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{"region":"us-west-2"}]' \
+  --region us-east-1
+
+# Create test source secret
+aws secretsmanager create-secret \
+  --name test/variable-expansion \
+  --secret-string '{"host":"db.us-east-1.amazonaws.com"}' \
+  --region us-east-1
+
+# Trigger replication
+aws secretsmanager put-secret-value \
+  --secret-id test/variable-expansion \
+  --secret-string '{"host":"db.us-east-1.amazonaws.com"}' \
+  --region us-east-1
+
+# Wait 5 seconds for replication
+sleep 5
+
+# Verify result
+aws secretsmanager get-secret-value \
+  --secret-id test/variable-expansion \
+  --region us-west-2 \
+  --query SecretString \
+  --output text
+# Expected: {"host":"db.us-west-2.amazonaws.com"}
+```
+
+### Troubleshooting Variable Expansion
+
+#### Error: Undefined Variable
+
+**Symptom**: CloudWatch logs show `VariableExpansionError: Undefined variable: ${FOO}`
+
+**Cause**: Transformation references a variable not available in the context
+
+**Solution**:
+1. Check available variables in error message
+2. Add missing variable to `destination.variables` in configuration secret
+3. Or use a different core variable (REGION, SOURCE_REGION, etc.)
+
+**Example Fix**:
+```json
+{
+  "destinations": [
+    {
+      "region": "us-west-2",
+      "variables": {
+        "FOO": "bar"  // Add missing variable
+      }
+    }
+  ]
+}
+```
+
+#### Error: Malformed Variable Syntax
+
+**Symptom**: Variables not being expanded
+
+**Cause**: Incorrect variable syntax (e.g., `{REGION}` instead of `${REGION}`)
+
+**Solution**: Use correct syntax `${VARIABLE_NAME}` with dollar sign and braces
+
+#### Debugging Variable Context
+
+Check CloudWatch logs for variable expansion details:
+
+```bash
+aws logs filter-log-events \
+  --log-group-name /aws/lambda/secrets-replicator \
+  --filter-pattern "variable context" \
+  --region us-west-2
+```
+
+Look for log entries showing available variables:
+```json
+{
+  "message": "Building variable context",
+  "destination_region": "us-west-2",
+  "variables": {
+    "REGION": "us-west-2",
+    "SOURCE_REGION": "us-east-1",
+    "SECRET_NAME": "my-app/config",
+    "DEST_SECRET_NAME": "my-app/config",
+    "ACCOUNT_ID": "123456789012",
+    "SOURCE_ACCOUNT_ID": "123456789012"
+  }
+}
+```
+
+### Best Practices
+
+1. **Use Descriptive Variable Names**: `${DB_ENDPOINT}` better than `${VAR1}`
+2. **Document Custom Variables**: Add comments in configuration secrets
+3. **Test Each Destination**: Verify variable expansion works for all destinations
+4. **Keep Transformations Simple**: Complex variable logic is harder to debug
+5. **Version Transformation Secrets**: Use Secrets Manager versioning for rollback
+6. **Monitor CloudWatch Logs**: Check for variable expansion errors
+
+### Example Files
+
+See the following example files for complete working examples:
+- `examples/sedfile-variables-region.sed` - Adaptive region swapping
+- `examples/sedfile-variables-json.json` - JSON transformation with variables
+- `examples/config-custom-variables.json` - Custom variables configuration
+
+---
+
 ## Sed Transformations
 
 ### Basic Syntax

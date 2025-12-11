@@ -3,10 +3,12 @@ Name mapping configuration management for secrets replicator.
 
 Handles loading, caching, and lookup for DEST_SECRET_NAMES configuration.
 Maps source secret names to destination secret names.
+Supports wildcard patterns like app/*, */prod, etc.
 """
 
 import json
 import logging
+import re
 import time
 from typing import Dict, Optional
 
@@ -147,65 +149,187 @@ def get_cached_mappings(mapping_list: str, ttl: int, client) -> Dict[str, str]:
     return mappings
 
 
-def get_destination_name(source_secret_name: str, config, client) -> str:
+def _match_pattern(secret_name: str, pattern: str) -> bool:
+    """
+    Match a secret name against a glob pattern.
+
+    Pattern matching rules:
+    - Exact match: "mysecret" matches only "mysecret"
+    - Prefix wildcard: "app/*" matches "app/prod", "app/staging/db", etc.
+    - Suffix wildcard: "*/prod" matches "app/prod", "db/prod", etc.
+    - Middle wildcard: "app/*/db" matches "app/prod/db", "app/staging/db", etc.
+    - Multiple wildcards: "app/*/prod/*" matches "app/team1/prod/db", etc.
+
+    Args:
+        secret_name: Name of the secret to match
+        pattern: Glob pattern (may contain *)
+
+    Returns:
+        True if pattern matches, False otherwise
+
+    Examples:
+        >>> _match_pattern("app/prod/db", "app/*")
+        True
+        >>> _match_pattern("app/prod/db", "app/prod/*")
+        True
+        >>> _match_pattern("app/prod/db", "db/*")
+        False
+    """
+    # Exact match (no wildcard)
+    if '*' not in pattern:
+        return secret_name == pattern
+
+    # Convert glob pattern to regex
+    # Escape special regex characters except *
+    escaped_pattern = re.escape(pattern)
+
+    # Replace escaped \* with regex .*
+    regex_pattern = escaped_pattern.replace(r'\*', '.*')
+
+    # Anchor the pattern
+    regex_pattern = f'^{regex_pattern}$'
+
+    # Compile and match
+    try:
+        compiled_pattern = re.compile(regex_pattern)
+        return bool(compiled_pattern.match(secret_name))
+    except re.error as e:
+        logger.error(f"Invalid regex pattern generated from '{pattern}': {e}")
+        return False
+
+
+def _apply_pattern_mapping(secret_name: str, pattern: str, dest_pattern: str) -> str:
+    """
+    Apply a pattern-based name mapping to transform secret name.
+
+    If the destination pattern contains wildcards, they are replaced with
+    the corresponding matched portions from the source secret name.
+
+    Args:
+        secret_name: Source secret name
+        pattern: Source pattern that matched
+        dest_pattern: Destination pattern to apply
+
+    Returns:
+        Transformed destination name
+
+    Examples:
+        >>> _apply_pattern_mapping("app/prod/db", "app/*", "my-app/*")
+        'my-app/prod/db'
+        >>> _apply_pattern_mapping("app/prod", "*/prod", "*/production")
+        'app/production'
+        >>> _apply_pattern_mapping("legacy-app", "legacy-*", "new-*")
+        'new-app'
+    """
+    # If destination has no wildcards, return it as-is
+    if '*' not in dest_pattern:
+        return dest_pattern
+
+    # Build regex to extract wildcard portions
+    escaped_pattern = re.escape(pattern)
+    regex_pattern = escaped_pattern.replace(r'\*', '(.*?)')
+    regex_pattern = f'^{regex_pattern}$'
+
+    try:
+        match = re.match(regex_pattern, secret_name)
+        if not match:
+            # Should not happen if _match_pattern was called first
+            logger.warning(f"Pattern '{pattern}' matched but regex extraction failed for '{secret_name}'")
+            return dest_pattern
+
+        # Replace wildcards in destination with captured groups
+        result = dest_pattern
+        for i, captured in enumerate(match.groups(), 1):
+            # Replace first * with captured value
+            result = result.replace('*', captured, 1)
+
+        logger.debug(f"Pattern mapping: '{secret_name}' ({pattern}) -> '{result}' ({dest_pattern})")
+        return result
+
+    except re.error as e:
+        logger.error(f"Regex error applying pattern mapping: {e}")
+        return dest_pattern
+
+
+def get_destination_name(source_secret_name: str, destination, client) -> Optional[str]:
     """
     Get destination secret name for a given source secret name.
 
+    IMPORTANT: When secret_names is configured, it acts as BOTH a filter and a name mapper.
+    Only secrets matching a pattern in the mapping will be replicated.
+
     Lookup logic:
-    1. If DEST_SECRET_NAMES not configured, return source name (standard DR pattern)
-    2. Load name mappings from DEST_SECRET_NAMES
-    3. Look up source name in mappings (exact match only)
-    4. If found, return mapped destination name
-    5. If not found, return source name (default behavior)
+    1. If destination.secret_names not configured, return source name (replicate all with same name)
+    2. Load name mappings from destination.secret_names
+    3. Try exact match lookup first
+    4. If no exact match, try pattern matching (in order)
+    5. If found, apply pattern transformation to destination name
+    6. If not found, return None (DO NOT replicate - filtering behavior)
 
     Args:
         source_secret_name: Name of the source secret
-        config: ReplicatorConfig object
+        destination: DestinationConfig object with secret_names and secret_names_cache_ttl
         client: Boto3 Secrets Manager client
 
     Returns:
-        Destination secret name (either mapped or source name)
+        Destination secret name if matched, None if secret should not be replicated
 
     Examples:
-        # No mappings configured
-        >>> get_destination_name("app/prod/db", config, client)
+        # No mappings configured - replicate all with same name
+        >>> get_destination_name("app/prod/db", destination, client)
         'app/prod/db'
 
-        # Mapping found
-        >>> get_destination_name("legacy-name", config, client)
+        # Exact match
+        >>> get_destination_name("legacy-name", destination, client)
         'new-name'
 
-        # No mapping found (use source name)
-        >>> get_destination_name("unmapped-secret", config, client)
-        'unmapped-secret'
+        # Pattern match
+        >>> get_destination_name("app/prod/db", destination, client)  # pattern: app/* -> my-app/*
+        'my-app/prod/db'
+
+        # No mapping found - do NOT replicate (filtering behavior)
+        >>> get_destination_name("unmapped-secret", destination, client)
+        None
     """
-    # LAYER 1: Check if DEST_SECRET_NAMES is configured
-    if not config.dest_secret_names:
-        # No mapping configured - use source name (standard DR/HA pattern)
-        logger.debug(f"No DEST_SECRET_NAMES configured, using source name: {source_secret_name}")
+    # LAYER 1: Check if secret_names is configured
+    if not destination.secret_names:
+        # No mapping configured - replicate ALL secrets with same name (standard DR/HA pattern)
+        logger.debug(f"No secret_names configured for destination, using source name: {source_secret_name}")
         return source_secret_name
 
     # LAYER 2: Load and check mappings
     mappings = get_cached_mappings(
-        config.dest_secret_names,
-        config.dest_secret_names_cache_ttl,
+        destination.secret_names,
+        destination.secret_names_cache_ttl,
         client
     )
 
     if not mappings:
-        # Mapping list specified but no mappings loaded - use source name
-        logger.debug(f"DEST_SECRET_NAMES specified but no mappings loaded, using source name: {source_secret_name}")
-        return source_secret_name
+        # Mapping list specified but no mappings loaded - DO NOT replicate (fail-safe)
+        logger.warning(f"secret_names specified but no mappings loaded - not replicating '{source_secret_name}'")
+        return None
 
-    # LAYER 3: Look up mapping (exact match only)
+    # LAYER 3: Try exact match first (most common case, fastest)
     if source_secret_name in mappings:
         dest_name = mappings[source_secret_name]
-        logger.info(f"Name mapping found: '{source_secret_name}' -> '{dest_name}'")
+        logger.info(f"Exact name mapping found: '{source_secret_name}' -> '{dest_name}'")
         return dest_name
 
-    # LAYER 4: No mapping found - use source name (default)
-    logger.debug(f"No name mapping for '{source_secret_name}', using source name")
-    return source_secret_name
+    # LAYER 4: Try pattern matching (check all patterns in order)
+    for pattern, dest_pattern in mappings.items():
+        # Skip patterns without wildcards (already checked in exact match)
+        if '*' not in pattern:
+            continue
+
+        if _match_pattern(source_secret_name, pattern):
+            # Apply pattern transformation
+            dest_name = _apply_pattern_mapping(source_secret_name, pattern, dest_pattern)
+            logger.info(f"Pattern name mapping found: '{source_secret_name}' matched '{pattern}' -> '{dest_name}'")
+            return dest_name
+
+    # LAYER 5: No mapping found - DO NOT replicate (filtering behavior)
+    logger.info(f"Secret '{source_secret_name}' does not match any pattern in secret_names - skipping replication to this destination")
+    return None
 
 
 def clear_mapping_cache():

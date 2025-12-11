@@ -8,11 +8,12 @@ regions and accounts with transformations.
 import re
 import time
 from typing import Dict, Any
-from config import load_config_from_env, ConfigurationError, ReplicatorConfig, DestinationConfig, TRANSFORMATION_SECRET_PREFIX, NAME_MAPPING_PREFIX
+from config import load_config_from_env, load_destinations, ConfigurationError, ReplicatorConfig, DestinationConfig, TRANSFORMATION_SECRET_PREFIX, NAME_MAPPING_PREFIX
 from event_parser import parse_eventbridge_event, validate_event_for_replication, EventParsingError
 from transformer import (
     transform_secret, parse_sedfile, parse_json_mapping,
-    detect_transform_type, parse_transform_names, TransformationError
+    detect_transform_type, parse_transform_names, TransformationError,
+    expand_variables, VariableExpansionError
 )
 from logger import setup_logger, log_event, log_secret_operation, log_transformation, log_replication, log_error
 from utils import get_secret_metadata, is_binary_data
@@ -27,6 +28,55 @@ from exceptions import (
 from metrics import get_metrics_publisher
 from filters import should_replicate_secret
 from name_mappings import get_destination_name
+
+
+def build_variable_context(
+    destination: DestinationConfig,
+    source_secret_id: str,
+    dest_secret_name: str,
+    source_region: str,
+    source_account_id: str
+) -> Dict[str, str]:
+    """
+    Build variable expansion context for a destination.
+
+    Creates a dictionary of variables that can be used in transformation secrets
+    using the ${VARIABLE} syntax.
+
+    Args:
+        destination: Destination configuration
+        source_secret_id: Source secret name/ID
+        dest_secret_name: Destination secret name (after name mapping)
+        source_region: Source AWS region
+        source_account_id: Source AWS account ID
+
+    Returns:
+        Dictionary mapping variable names to values
+
+    Examples:
+        >>> dest = DestinationConfig(region='us-east-1')
+        >>> ctx = build_variable_context(dest, 'my-secret', 'my-secret', 'us-west-2', '123456')
+        >>> ctx['REGION']
+        'us-east-1'
+        >>> ctx['SOURCE_REGION']
+        'us-west-2'
+    """
+    # Core variables available to all transformations
+    context = {
+        'REGION': destination.region,
+        'SOURCE_REGION': source_region,
+        'SECRET_NAME': source_secret_id,
+        'DEST_SECRET_NAME': dest_secret_name,
+        'ACCOUNT_ID': destination.account_role_arn.split(':')[4] if destination.account_role_arn else source_account_id,
+        'SOURCE_ACCOUNT_ID': source_account_id
+    }
+
+    # Add custom variables from destination config
+    if destination.variables:
+        # Custom variables override core variables (user takes responsibility)
+        context.update(destination.variables)
+
+    return context
 
 
 def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
@@ -93,6 +143,19 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
         # Create Secrets Manager client for source region
         source_client = create_secrets_manager_client(region=secret_event.region)
+
+        # Load destination configurations from Secrets Manager
+        try:
+            load_destinations(config, source_client)
+            log_event(logger, 'INFO', f'Loaded {len(config.destinations)} destination(s)',
+                     config_secret=config.config_secret,
+                     destination_regions=[d.region for d in config.destinations])
+        except ConfigurationError as e:
+            log_error(logger, e, context={'stage': 'load_destinations', 'secret': config.config_secret})
+            return {
+                'statusCode': 500,
+                'body': f'Failed to load destinations: {e}'
+            }
 
         # Extract secret name from ARN (removes AWS 6-char suffix)
         from event_parser import extract_secret_name_from_arn
@@ -182,24 +245,16 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                                  transform_name=transform_name,
                                  transform_type=detected_mode)
 
-                    # Parse transformation rules
-                    if detected_mode == 'sed':
-                        transform_rules = parse_sedfile(transform_content)
-                    else:  # json
-                        transform_rules = parse_json_mapping(transform_content)
-
+                    # Store raw content (parsing happens per-destination after variable expansion)
                     transformation_chain.append({
                         'name': transform_name,
                         'mode': detected_mode,
-                        'content': transform_content,
-                        'rules': transform_rules,
-                        'rules_count': len(transform_rules)
+                        'content': transform_content
                     })
 
                     log_event(logger, 'INFO', f'Transformation {i}/{len(transform_names)} loaded successfully',
                              transform_name=transform_name,
                              mode=detected_mode,
-                             rules_count=len(transform_rules),
                              size_bytes=len(transform_content))
 
                 except SecretNotFoundError as e:
@@ -250,13 +305,11 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
             source_secret = source_client.get_secret(secret_event.secret_id)
 
             # Check if secret is binary (no transformation for binary secrets)
-            if source_secret.secret_binary:
-                log_event(logger, 'INFO', 'Binary secret detected, skipping transformation',
+            is_binary = bool(source_secret.secret_binary)
+            if is_binary:
+                log_event(logger, 'INFO', 'Binary secret detected',
                          secret_id=secret_event.secret_id)
-                transformed_value = None
-                is_binary = True
             else:
-                is_binary = False
                 input_size = len(source_secret.secret_string)
 
                 # Validate secret size
@@ -266,73 +319,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                         f'Secret size ({input_size} bytes) exceeds maximum '
                         f'({max_kb:.0f}KB)'
                     )
-
-                # Apply transformation chain (each transformation operates on previous result)
-                transformed_value = source_secret.secret_string
-                total_transform_duration = 0
-                total_rules_count = 0
-
-                for i, transformation in enumerate(transformation_chain, 1):
-                    transform_start = time.time()
-
-                    log_event(logger, 'INFO', f'Applying transformation {i}/{len(transformation_chain)}',
-                             transform_name=transformation['name'],
-                             mode=transformation['mode'],
-                             rules_count=transformation['rules_count'])
-
-                    # Apply this transformation
-                    transformed_value = transform_secret(
-                        transformed_value,
-                        mode=transformation['mode'],
-                        rules_content=transformation['content']
-                    )
-
-                    transform_duration = (time.time() - transform_start) * 1000
-                    total_transform_duration += transform_duration
-                    total_rules_count += transformation['rules_count']
-
-                    log_event(logger, 'INFO', f'Transformation {i}/{len(transformation_chain)} applied',
-                             transform_name=transformation['name'],
-                             duration_ms=transform_duration,
-                             output_size=len(transformed_value))
-
-                    # Publish metrics for this transformation
-                    metrics.publish_transformation_metrics(
-                        mode=transformation['mode'],
-                        input_size_bytes=len(source_secret.secret_string) if i == 1 else len(transformed_value),
-                        output_size_bytes=len(transformed_value),
-                        duration_ms=transform_duration,
-                        rules_count=transformation['rules_count']
-                    )
-
-                output_size = len(transformed_value)
-
-                # Log transformation (handle pass-through case)
-                if len(transformation_chain) == 0:
-                    mode_str = 'passthrough'
-                elif len(transformation_chain) > 1:
-                    mode_str = 'chain'
-                else:
-                    mode_str = transformation_chain[0]['mode']
-
-                log_transformation(
-                    logger,
-                    mode=mode_str,
-                    rules_count=total_rules_count,
-                    input_size=input_size,
-                    output_size=output_size,
-                    duration_ms=total_transform_duration
-                )
-
-                if len(transformation_chain) > 0:
-                    log_event(logger, 'INFO', 'Transformation chain completed',
-                             chain_length=len(transformation_chain),
-                             total_duration_ms=total_transform_duration,
-                             total_rules=total_rules_count,
-                             size_change=f'{input_size} → {output_size} bytes')
-                else:
-                    log_event(logger, 'INFO', 'Pass-through replication (no transformation)',
-                             secret_size=output_size)
 
         except SecretNotFoundError as e:
             log_error(logger, e, context={'stage': 'source_retrieval',
@@ -371,23 +357,18 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                     role_arn=destination.account_role_arn
                 )
 
-                # Create a temporary config object for name mapping lookup (backward compatibility)
-                temp_config = ReplicatorConfig(
-                    destinations=[destination],
-                    transform_mode=config.transform_mode,
-                    log_level=config.log_level,
-                    enable_metrics=config.enable_metrics,
-                    dlq_arn=config.dlq_arn,
-                    timeout_seconds=config.timeout_seconds,
-                    max_secret_size=config.max_secret_size,
-                    secrets_filter=config.secrets_filter,
-                    secrets_filter_cache_ttl=config.secrets_filter_cache_ttl
-                )
-                temp_config.dest_secret_names = destination.secret_names
-                temp_config.dest_secret_names_cache_ttl = destination.secret_names_cache_ttl
-
                 # Determine destination secret name using name mapping lookup
-                dest_secret_name = get_destination_name(secret_event.secret_id, temp_config, source_client)
+                # Returns None if secret doesn't match any pattern (filtering behavior)
+                dest_secret_name = get_destination_name(secret_event.secret_id, destination, source_client)
+
+                # If None returned, secret doesn't match secret_names filter - skip this destination
+                if dest_secret_name is None:
+                    log_event(logger, 'INFO', 'Secret filtered out by secret_names - skipping destination',
+                             source_secret=secret_event.secret_id,
+                             dest_region=destination.region,
+                             reason='No matching pattern in secret_names mapping')
+                    # Don't add to destination_results - this is expected filtering, not an error
+                    continue
 
                 # Check if destination would be a transformation secret (defense-in-depth)
                 if dest_secret_name.startswith(TRANSFORMATION_SECRET_PREFIX):
@@ -428,6 +409,64 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
 
                 log_secret_operation(logger, 'write', dest_secret_name,
                                    region=destination.region)
+
+                # Apply transformations with variable expansion for this destination
+                if is_binary:
+                    # Binary secrets are not transformed
+                    transformed_value = None
+                else:
+                    # Build variable context for this destination
+                    var_context = build_variable_context(
+                        destination=destination,
+                        source_secret_id=secret_event.secret_id,
+                        dest_secret_name=dest_secret_name,
+                        source_region=secret_event.region,
+                        source_account_id=config.source_account_id or 'unknown'
+                    )
+
+                    # Apply transformation chain with variable expansion
+                    transformed_value = source_secret.secret_string
+                    total_transform_duration = 0
+
+                    for i, transformation in enumerate(transformation_chain, 1):
+                        transform_start = time.time()
+
+                        # Expand variables in transformation content for this destination
+                        try:
+                            expanded_content = expand_variables(transformation['content'], var_context)
+                        except VariableExpansionError as e:
+                            log_error(logger, e, context={
+                                'stage': 'variable_expansion',
+                                'transform_name': transformation['name'],
+                                'destination': destination.region
+                            })
+                            raise TransformationError(f"Variable expansion failed in {transformation['name']}: {e}")
+
+                        log_event(logger, 'INFO', f'Applying transformation {i}/{len(transformation_chain)}',
+                                 transform_name=transformation['name'],
+                                 mode=transformation['mode'],
+                                 dest_region=destination.region)
+
+                        # Apply this transformation
+                        transformed_value = transform_secret(
+                            transformed_value,
+                            mode=transformation['mode'],
+                            rules_content=expanded_content
+                        )
+
+                        transform_duration = (time.time() - transform_start) * 1000
+                        total_transform_duration += transform_duration
+
+                        log_event(logger, 'INFO', f'Transformation {i}/{len(transformation_chain)} applied',
+                                 transform_name=transformation['name'],
+                                 duration_ms=transform_duration,
+                                 output_size=len(transformed_value))
+
+                    if len(transformation_chain) > 0:
+                        log_event(logger, 'INFO', 'Transformation chain completed for destination',
+                                 dest_region=destination.region,
+                                 chain_length=len(transformation_chain),
+                                 total_duration_ms=total_transform_duration)
 
                 # Write secret (binary or string)
                 if is_binary:

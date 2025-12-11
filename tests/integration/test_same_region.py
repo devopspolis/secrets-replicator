@@ -297,8 +297,8 @@ s/us-east-1/us-west-2/g
             event_name="PutSecretValue",
             secret_arn=source["ARN"],
             region=aws_region,
-            account_id=account_id,
-        })
+            account_id=account_id
+        )
 
         # Invoke handler
         result = lambda_handler(event, {})

@@ -1,0 +1,128 @@
+{
+  "description": "Example configuration with custom variables per destination",
+  "note": "This is the content for the secrets-replicator/config/destinations secret",
+  "destinations": [
+    {
+      "region": "us-west-2",
+      "variables": {
+        "ENV": "production",
+        "DB_INSTANCE": "prod-db-west",
+        "DB_PORT": "5432",
+        "API_DOMAIN": "api.prod.west.example.com",
+        "CACHE_ENDPOINT": "redis.prod.west.example.com:6379",
+        "S3_BUCKET": "my-app-data-west"
+      }
+    },
+    {
+      "region": "eu-west-1",
+      "variables": {
+        "ENV": "production",
+        "DB_INSTANCE": "prod-db-eu",
+        "DB_PORT": "5432",
+        "API_DOMAIN": "api.prod.eu.example.com",
+        "CACHE_ENDPOINT": "redis.prod.eu.example.com:6379",
+        "S3_BUCKET": "my-app-data-eu"
+      }
+    },
+    {
+      "region": "ap-south-1",
+      "variables": {
+        "ENV": "production",
+        "DB_INSTANCE": "prod-db-apac",
+        "DB_PORT": "5432",
+        "API_DOMAIN": "api.prod.apac.example.com",
+        "CACHE_ENDPOINT": "redis.prod.apac.example.com:6379",
+        "S3_BUCKET": "my-app-data-apac"
+      }
+    }
+  ],
+  "example_transformation": {
+    "description": "Example sed transformation that uses these custom variables",
+    "secret_name": "secrets-replicator/transformations/custom-var-transform",
+    "content": [
+      "# Update environment",
+      "s/dev/${ENV}/g",
+      "",
+      "# Update database instance",
+      "s/dev-db-1/${DB_INSTANCE}/g",
+      "s/5433/${DB_PORT}/g",
+      "",
+      "# Update API domain",
+      "s/api\\.dev\\.example\\.com/${API_DOMAIN}/g",
+      "",
+      "# Update cache endpoint",
+      "s/redis\\.dev\\.example\\.com:6379/${CACHE_ENDPOINT}/g",
+      "",
+      "# Update S3 bucket references",
+      "s/my-app-data-dev/${S3_BUCKET}/g"
+    ]
+  },
+  "example_json_transformation": {
+    "description": "Example JSON transformation that uses custom variables",
+    "secret_name": "secrets-replicator/transformations/custom-json-transform",
+    "content": {
+      "transformations": [
+        {
+          "path": "$.environment",
+          "find": "dev",
+          "replace": "${ENV}"
+        },
+        {
+          "path": "$.database.instance",
+          "find": "dev-db-1",
+          "replace": "${DB_INSTANCE}"
+        },
+        {
+          "path": "$.database.port",
+          "find": "5433",
+          "replace": "${DB_PORT}"
+        },
+        {
+          "path": "$.api.domain",
+          "find": "api.dev.example.com",
+          "replace": "${API_DOMAIN}"
+        },
+        {
+          "path": "$.cache.endpoint",
+          "find": "redis.dev.example.com:6379",
+          "replace": "${CACHE_ENDPOINT}"
+        },
+        {
+          "path": "$.s3.bucket",
+          "find": "my-app-data-dev",
+          "replace": "${S3_BUCKET}"
+        },
+        {
+          "path": "$.metadata.region",
+          "find": "unknown",
+          "replace": "${REGION}"
+        }
+      ]
+    }
+  },
+  "usage": [
+    "1. Create this configuration secret:",
+    "   aws secretsmanager put-secret-value \\",
+    "     --secret-id secrets-replicator/config/destinations \\",
+    "     --secret-string \"$(cat config-custom-variables.json | jq -c '.destinations')\" \\",
+    "     --region us-east-1",
+    "",
+    "2. Create transformation secret (using example_transformation.content):",
+    "   aws secretsmanager create-secret \\",
+    "     --name secrets-replicator/transformations/custom-var-transform \\",
+    "     --secret-string \"<sedfile content>\" \\",
+    "     --region us-east-1",
+    "",
+    "3. Update source secret with custom variables tag:",
+    "   aws secretsmanager tag-resource \\",
+    "     --secret-id my-app/config \\",
+    "     --tags Key=SecretsReplicator:TransformWith,Value=custom-var-transform \\",
+    "     --region us-east-1",
+    "",
+    "4. Trigger replication by updating the secret:",
+    "   aws secretsmanager put-secret-value \\",
+    "     --secret-id my-app/config \\",
+    "     --secret-string \"{...}\" \\",
+    "     --region us-east-1"
+  ]
+}

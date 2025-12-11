@@ -285,39 +285,20 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
         logger.debug(f"Excluded: filter secret (prefix: {FILTER_SECRET_PREFIX})")
         return (False, None)
 
-    # LAYER 2: Check SECRETS_FILTER configuration
-    if not config.secrets_filter:
-        # No filter configured - default deny for safety
-        logger.warning(f"No SECRETS_FILTER configured, denying replication by default")
+    # Hardcoded exclusion for config secrets
+    if secret_name.startswith('secrets-replicator/config/'):
+        logger.debug(f"Excluded: config secret (prefix: secrets-replicator/config/)")
         return (False, None)
 
-    # LAYER 3: Load and check filters
-    filters = get_cached_filters(
-        config.secrets_filter,
-        config.secrets_filter_cache_ttl,
-        client
-    )
-
-    if not filters:
-        # Filter list specified but no patterns loaded
-        logger.warning(f"SECRETS_FILTER specified but no patterns loaded, denying replication")
+    if secret_name.startswith('secrets-replicator/names/'):
+        logger.debug(f"Excluded: name mapping secret (prefix: secrets-replicator/names/)")
         return (False, None)
 
-    # LAYER 4: Find matching filter
-    result = find_matching_filter(secret_name, filters)
-
-    if result is False:
-        # No match found - deny replication
-        logger.info(f"Secret '{secret_name}' does not match any filter patterns, skipping replication")
-        return (False, None)
-
-    # Match found - result is transformation name (or None for no transformation)
-    if result is None:
-        logger.info(f"Secret '{secret_name}' matches filter, replicating without transformation")
-    else:
-        logger.info(f"Secret '{secret_name}' matches filter, transformation: '{result}'")
-
-    return (True, result)
+    # LAYER 2: All other secrets are allowed for replication
+    # Filtering is now event-driven via EventBridge rule configuration
+    # No transformation applied by default (transformations loaded per-destination)
+    logger.info(f"Secret '{secret_name}' allowed for replication")
+    return (True, None)
 
 
 def clear_filter_cache():

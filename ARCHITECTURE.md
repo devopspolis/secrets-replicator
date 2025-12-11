@@ -249,6 +249,156 @@ def apply_json_transforms(secret_value: str, mappings: List[JsonMapping]) -> str
     return json.dumps(secret_obj, separators=(',', ':'))
 ```
 
+#### Variable Expansion
+
+**NEW FEATURE**: Transformation secrets now support variable references that are expanded dynamically for each destination.
+
+**Syntax**: `${VARIABLE_NAME}`
+
+**Purpose**: Enable a single transformation secret to work across multiple destinations by dynamically substituting destination-specific values at runtime.
+
+**Variable Expansion Flow**:
+```
+1. Load transformation secret content (raw, unexpanded)
+2. For each destination:
+   a. Build variable context with core and custom variables
+   b. Expand ${VARIABLE} references in transformation content
+   c. Parse expanded content into transformation rules
+   d. Apply transformations to secret value
+```
+
+**Available Variables**:
+
+| Variable | Source | Example |
+|----------|--------|---------|
+| `REGION` | Destination config | `us-west-2` |
+| `SOURCE_REGION` | Lambda execution context | `us-east-1` |
+| `SECRET_NAME` | Event detail | `my-app/db-config` |
+| `DEST_SECRET_NAME` | After name mapping | `my-app/db-config-west` |
+| `ACCOUNT_ID` | Destination role ARN or current | `123456789012` |
+| `SOURCE_ACCOUNT_ID` | Lambda execution context | `999999999999` |
+| *Custom variables* | Destination config `variables` field | User-defined |
+
+**Implementation**:
+```python
+def expand_variables(text: str, context: Dict[str, str]) -> str:
+    """
+    Expand ${VARIABLE} references in transformation content
+
+    Args:
+        text: Transformation content with variable references
+        context: Dict mapping variable names to values
+
+    Returns:
+        Text with all variables expanded
+
+    Raises:
+        VariableExpansionError: If variable is undefined
+    """
+    # Pattern: ${UPPERCASE_VAR_NAME}
+    pattern = re.compile(r'\$\{([A-Z_][A-Z0-9_]*)\}')
+
+    def replace_variable(match):
+        var_name = match.group(1)
+        if var_name not in context:
+            available = ', '.join(sorted(context.keys()))
+            raise VariableExpansionError(
+                f"Undefined variable: ${{{var_name}}}. "
+                f"Available: {available}"
+            )
+        return context[var_name]
+
+    return pattern.sub(replace_variable, text)
+
+def build_variable_context(
+    destination: DestinationConfig,
+    source_secret_id: str,
+    dest_secret_name: str,
+    source_region: str,
+    source_account_id: str
+) -> Dict[str, str]:
+    """Build variable context for a destination"""
+    context = {
+        'REGION': destination.region,
+        'SOURCE_REGION': source_region,
+        'SECRET_NAME': source_secret_id,
+        'DEST_SECRET_NAME': dest_secret_name,
+        'ACCOUNT_ID': extract_account_from_role(destination.account_role_arn)
+                      if destination.account_role_arn else source_account_id,
+        'SOURCE_ACCOUNT_ID': source_account_id
+    }
+
+    # Add custom variables (override core variables if defined)
+    if destination.variables:
+        context.update(destination.variables)
+
+    return context
+```
+
+**Example - Region-Aware Sed Transformation**:
+```bash
+# Transformation secret content (unexpanded):
+s/${SOURCE_REGION}/${REGION}/g
+s/rds.${SOURCE_REGION}/rds.${REGION}/g
+
+# Expanded for destination us-west-2:
+s/us-east-1/us-west-2/g
+s/rds.us-east-1/rds.us-west-2/g
+
+# Expanded for destination eu-west-1:
+s/us-east-1/eu-west-1/g
+s/rds.us-east-1/rds.eu-west-1/g
+```
+
+**Example - JSON Transformation with Variables**:
+```json
+{
+  "transformations": [
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.sns.topic_arn",
+      "find": "arn:aws:sns:us-east-1:999999999999:topic",
+      "replace": "arn:aws:sns:${REGION}:${ACCOUNT_ID}:topic"
+    }
+  ]
+}
+```
+
+**Custom Variables Example**:
+```json
+{
+  "region": "us-west-2",
+  "variables": {
+    "ENV": "production",
+    "DB_INSTANCE": "prod-db-west",
+    "API_DOMAIN": "api.prod.west.example.com"
+  }
+}
+```
+
+With transformation:
+```bash
+s/dev/${ENV}/g
+s/dev-db-1/${DB_INSTANCE}/g
+s/api\.dev\.example\.com/${API_DOMAIN}/g
+```
+
+**Security Considerations**:
+- Variable names restricted to `[A-Z_][A-Z0-9_]*` pattern (no injection risk)
+- Simple string substitution (no code execution)
+- Undefined variables raise errors (fail-fast)
+- Custom variables explicitly defined per destination
+
+**Benefits**:
+- ✅ Single transformation secret for all destinations
+- ✅ Reduced maintenance (one secret vs many)
+- ✅ Consistent transformation logic across regions
+- ✅ Flexible per-destination customization via custom variables
+
 ### 4. AWS Clients Module
 
 **Module**: `aws_clients.py`

@@ -159,8 +159,8 @@ class TestCrossRegionReplication:
             event_name="PutSecretValue",
             secret_arn=source["ARN"],
             region=aws_region,
-            account_id=account_id,
-        })
+            account_id=account_id
+        )
 
         # Measure replication time
         start = time.time()

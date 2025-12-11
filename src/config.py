@@ -7,13 +7,14 @@ Loads configuration from environment variables with validation.
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 
 # Hardcoded prefixes for security and consistency
 TRANSFORMATION_SECRET_PREFIX = 'secrets-replicator/transformations/'
 FILTER_SECRET_PREFIX = 'secrets-replicator/filters/'
 NAME_MAPPING_PREFIX = 'secrets-replicator/names/'
+DEFAULT_DESTINATIONS_SECRET = 'secrets-replicator/config/destinations'
 
 
 class ConfigurationError(Exception):
@@ -30,6 +31,7 @@ class DestinationConfig:
     secret_names: Optional[str] = None           # Comma-separated list of name mapping secret names
     secret_names_cache_ttl: int = 300            # Cache TTL for name mappings (seconds)
     kms_key_id: Optional[str] = None             # KMS key ID for encryption (optional)
+    variables: Optional[Dict[str, str]] = None   # Custom variables for transformation expansion
 
     def __post_init__(self):
         """Validate destination configuration"""
@@ -80,20 +82,19 @@ class ReplicatorConfig:
     timeout_seconds: int = 5                      # Regex timeout
     max_secret_size: int = 65536                  # Max secret size (64KB)
 
-    # Centralized filtering (SECRETS_FILTER)
-    secrets_filter: Optional[str] = None  # Comma-separated list of filter secret names
-    secrets_filter_cache_ttl: int = 300   # Cache TTL in seconds (5 minutes)
+    # Default values for destination configurations (can be overridden per-destination)
+    default_secret_names: Optional[str] = None    # Default name mapping secret
+    default_region: Optional[str] = None          # Default destination region
+    default_role_arn: Optional[str] = None        # Default cross-account role ARN
+    secret_names_cache_ttl: int = 300             # Cache TTL for name mappings (seconds)
+    default_kms_key_id: Optional[str] = None      # Default KMS key ID for encryption
 
     # Internal/computed fields
     source_region: Optional[str] = field(default=None, init=False)
     source_account_id: Optional[str] = field(default=None, init=False)
 
-    # Legacy compatibility fields (deprecated, for backward compatibility only)
-    dest_region: Optional[str] = field(default=None, init=False)
-    dest_account_role_arn: Optional[str] = field(default=None, init=False)
-    dest_secret_names: Optional[str] = field(default=None, init=False)
-    dest_secret_names_cache_ttl: Optional[int] = field(default=None, init=False)
-    kms_key_id: Optional[str] = field(default=None, init=False)
+    # Configuration secret name
+    config_secret: str = DEFAULT_DESTINATIONS_SECRET
 
     def __post_init__(self):
         """Validate configuration after initialization"""
@@ -103,17 +104,17 @@ class ReplicatorConfig:
         """
         Validate configuration values.
 
+        Note: Destinations list validation is skipped if empty, as destinations
+        are loaded later via load_destinations().
+
         Raises:
             ConfigurationError: If configuration is invalid
         """
-        # Validate destinations list
-        if not self.destinations or len(self.destinations) == 0:
-            raise ConfigurationError("At least one destination is required")
-
-        # Validate each destination (already validated in DestinationConfig.__post_init__)
-        for i, dest in enumerate(self.destinations):
-            if not isinstance(dest, DestinationConfig):
-                raise ConfigurationError(f"Destination {i} must be a DestinationConfig instance")
+        # Validate destinations list (if loaded)
+        if self.destinations:
+            for i, dest in enumerate(self.destinations):
+                if not isinstance(dest, DestinationConfig):
+                    raise ConfigurationError(f"Destination {i} must be a DestinationConfig instance")
 
         # Validate transform mode
         valid_modes = ['auto', 'sed', 'json']
@@ -195,96 +196,46 @@ def load_config_from_env() -> ReplicatorConfig:
     """
     Load configuration from environment variables.
 
+    Note: destinations list is initially empty and must be loaded via
+    load_destinations() after creating a Secrets Manager client.
+
     Environment variables:
-        DESTINATIONS (required): JSON-encoded list of destination configurations
-            Example: '[{"region":"us-east-1","secret_names":"secrets-replicator/names/us-east-1"}]'
-
-        Alternative (legacy, deprecated):
-            DEST_REGION: Single destination region (for backward compatibility)
-            DEST_ACCOUNT_ROLE_ARN: IAM role ARN for cross-account access
-            DEST_SECRET_NAMES: Name mapping secret names
-            DEST_SECRET_NAMES_CACHE_TTL: Cache TTL for name mappings
-            KMS_KEY_ID: KMS key ID for encryption
-
-        Common parameters:
-            TRANSFORM_MODE: Transformation mode (default: 'auto')
-            LOG_LEVEL: Log level (default: 'INFO')
-            ENABLE_METRICS: Enable CloudWatch metrics (default: 'true')
-            DLQ_ARN: Dead Letter Queue ARN
-            TIMEOUT_SECONDS: Regex timeout (default: 5)
-            MAX_SECRET_SIZE: Maximum secret size (default: 65536)
-            SECRETS_FILTER: Comma-separated list of filter secret names
-            SECRETS_FILTER_CACHE_TTL: Cache TTL for filter configuration in seconds (default: 300)
+        CONFIG_SECRET: Name of Secrets Manager secret containing configuration
+            (default: 'secrets-replicator/config/destinations')
+        DEFAULT_SECRET_NAMES: Default name mapping secret for destinations
+        DEFAULT_REGION: Default destination region
+        DEFAULT_ROLE_ARN: Default cross-account IAM role ARN
+        SECRET_NAMES_CACHE_TTL: Cache TTL for name mappings in seconds (default: 300)
+        KMS_KEY_ID: Default KMS key ID for destination encryption
+        TRANSFORM_MODE: Transformation mode (default: 'auto')
+        LOG_LEVEL: Log level (default: 'INFO')
+        ENABLE_METRICS: Enable CloudWatch metrics (default: 'true')
+        DLQ_ARN: Dead Letter Queue ARN
+        TIMEOUT_SECONDS: Regex timeout (default: 5)
+        MAX_SECRET_SIZE: Maximum secret size (default: 65536)
 
     Returns:
-        ReplicatorConfig object
+        ReplicatorConfig object with empty destinations list
 
     Raises:
-        ConfigurationError: If required config is missing or invalid
+        ConfigurationError: If configuration is invalid
 
     Examples:
         >>> import os
-        >>> os.environ['DESTINATIONS'] = '[{"region":"us-west-2"}]'
+        >>> os.environ['CONFIG_SECRET'] = 'my-app/config/destinations'
         >>> config = load_config_from_env()
-        >>> config.destinations[0].region
-        'us-west-2'
+        >>> config.config_secret
+        'my-app/config/destinations'
     """
-    # Parse destinations (new multi-destination format)
-    destinations_json = os.environ.get('DESTINATIONS', '').strip()
+    # Get configuration secret name (defaults to hardcoded value)
+    config_secret = os.environ.get('CONFIG_SECRET', '').strip() or DEFAULT_DESTINATIONS_SECRET
 
-    if destinations_json:
-        # New format: JSON-encoded list of destinations
-        try:
-            destinations_data = json.loads(destinations_json)
-        except json.JSONDecodeError as e:
-            raise ConfigurationError(f"Invalid JSON in DESTINATIONS: {e}")
-
-        if not isinstance(destinations_data, list):
-            raise ConfigurationError("DESTINATIONS must be a JSON array")
-
-        if len(destinations_data) == 0:
-            raise ConfigurationError("DESTINATIONS must contain at least one destination")
-
-        destinations = []
-        for i, dest_data in enumerate(destinations_data):
-            if not isinstance(dest_data, dict):
-                raise ConfigurationError(f"Destination {i} must be a JSON object")
-
-            try:
-                dest = DestinationConfig(
-                    region=dest_data.get('region', ''),
-                    account_role_arn=dest_data.get('account_role_arn') or dest_data.get('accountRoleArn'),
-                    secret_names=dest_data.get('secret_names') or dest_data.get('secretNames'),
-                    secret_names_cache_ttl=dest_data.get('secret_names_cache_ttl') or
-                                          dest_data.get('secretNamesCacheTTL') or 300,
-                    kms_key_id=dest_data.get('kms_key_id') or dest_data.get('kmsKeyId')
-                )
-                destinations.append(dest)
-            except (TypeError, ConfigurationError) as e:
-                raise ConfigurationError(f"Invalid destination {i}: {e}")
-
-    else:
-        # Legacy format: Single destination from separate env vars (backward compatibility)
-        dest_region = os.environ.get('DEST_REGION', '').strip()
-        if not dest_region:
-            raise ConfigurationError(
-                "Missing required configuration: Either DESTINATIONS or DEST_REGION must be set"
-            )
-
-        dest_account_role_arn = os.environ.get('DEST_ACCOUNT_ROLE_ARN', '').strip() or None
-        dest_secret_names = os.environ.get('DEST_SECRET_NAMES', '').strip() or None
-        dest_secret_names_cache_ttl = int(os.environ.get('DEST_SECRET_NAMES_CACHE_TTL', '300'))
-        kms_key_id = os.environ.get('KMS_KEY_ID', '').strip() or None
-
-        destinations = [
-            DestinationConfig(
-                region=dest_region,
-                account_role_arn=dest_account_role_arn,
-                secret_names=dest_secret_names,
-                secret_names_cache_ttl=dest_secret_names_cache_ttl,
-                kms_key_id=kms_key_id
-            )
-        ]
+    # Default values for destination configurations
+    default_secret_names = os.environ.get('DEFAULT_SECRET_NAMES', '').strip() or None
+    default_region = os.environ.get('DEFAULT_REGION', '').strip() or None
+    default_role_arn = os.environ.get('DEFAULT_ROLE_ARN', '').strip() or None
+    secret_names_cache_ttl = int(os.environ.get('SECRET_NAMES_CACHE_TTL', '300'))
+    default_kms_key_id = os.environ.get('KMS_KEY_ID', '').strip() or None
 
     # Common parameters
     transform_mode = os.environ.get('TRANSFORM_MODE', 'auto').strip()
@@ -301,31 +252,108 @@ def load_config_from_env() -> ReplicatorConfig:
     timeout_seconds = int(os.environ.get('TIMEOUT_SECONDS', '5'))
     max_secret_size = int(os.environ.get('MAX_SECRET_SIZE', '65536'))
 
-    # Centralized filtering (SECRETS_FILTER)
-    secrets_filter = os.environ.get('SECRETS_FILTER', '').strip() or None
-    secrets_filter_cache_ttl = int(os.environ.get('SECRETS_FILTER_CACHE_TTL', '300'))
-
     config = ReplicatorConfig(
-        destinations=destinations,
+        destinations=[],  # Empty - must be loaded via load_destinations()
         transform_mode=transform_mode,
         log_level=log_level,
         enable_metrics=enable_metrics,
         dlq_arn=dlq_arn,
         timeout_seconds=timeout_seconds,
         max_secret_size=max_secret_size,
-        secrets_filter=secrets_filter,
-        secrets_filter_cache_ttl=secrets_filter_cache_ttl
+        default_secret_names=default_secret_names,
+        default_region=default_region,
+        default_role_arn=default_role_arn,
+        secret_names_cache_ttl=secret_names_cache_ttl,
+        default_kms_key_id=default_kms_key_id,
+        config_secret=config_secret
     )
 
-    # Set legacy compatibility fields for backward compatibility with existing code
-    if len(destinations) > 0:
-        config.dest_region = destinations[0].region
-        config.dest_account_role_arn = destinations[0].account_role_arn
-        config.dest_secret_names = destinations[0].secret_names
-        config.dest_secret_names_cache_ttl = destinations[0].secret_names_cache_ttl
-        config.kms_key_id = destinations[0].kms_key_id
-
     return config
+
+
+def load_destinations(config: ReplicatorConfig, secrets_manager_client) -> None:
+    """
+    Load destination configurations from Secrets Manager secret.
+
+    Updates config.destinations in-place by loading from the configured
+    destinations secret.
+
+    Args:
+        config: ReplicatorConfig object to update
+        secrets_manager_client: Boto3 Secrets Manager client for source region
+
+    Raises:
+        ConfigurationError: If destinations secret doesn't exist, is invalid,
+            or contains no destinations
+
+    Examples:
+        >>> config = load_config_from_env()
+        >>> load_destinations(config, sm_client)
+        >>> len(config.destinations)
+        2
+    """
+    try:
+        response = secrets_manager_client.get_secret(secret_id=config.config_secret)
+        destinations_json = response.secret_string
+    except Exception as e:
+        error_msg = str(e)
+        if 'ResourceNotFoundException' in error_msg or 'not found' in error_msg.lower():
+            raise ConfigurationError(
+                f"Configuration secret not found: {config.config_secret}. "
+                f"Please create this secret with a JSON array of destination configurations. "
+                f"Example: '[{{\"region\":\"us-east-1\"}}]'"
+            )
+        raise ConfigurationError(f"Failed to load configuration secret '{config.config_secret}': {e}")
+
+    # Parse JSON
+    try:
+        destinations_data = json.loads(destinations_json)
+    except json.JSONDecodeError as e:
+        raise ConfigurationError(
+            f"Invalid JSON in configuration secret '{config.config_secret}': {e}"
+        )
+
+    if not isinstance(destinations_data, list):
+        raise ConfigurationError(
+            f"Configuration secret '{config.config_secret}' must contain a JSON array, got {type(destinations_data).__name__}"
+        )
+
+    if len(destinations_data) == 0:
+        raise ConfigurationError(
+            f"Configuration secret '{config.config_secret}' must contain at least one destination"
+        )
+
+    # Parse each destination
+    destinations = []
+    for i, dest_data in enumerate(destinations_data):
+        if not isinstance(dest_data, dict):
+            raise ConfigurationError(
+                f"Destination {i} in secret '{config.config_secret}' must be a JSON object, got {type(dest_data).__name__}"
+            )
+
+        try:
+            # Parse variables (can be dict or None)
+            variables = dest_data.get('variables')
+            if variables is not None and not isinstance(variables, dict):
+                raise ConfigurationError(
+                    f"Destination {i}: 'variables' must be a JSON object (dict), got {type(variables).__name__}"
+                )
+
+            dest = DestinationConfig(
+                region=dest_data.get('region', ''),
+                account_role_arn=dest_data.get('account_role_arn') or dest_data.get('accountRoleArn'),
+                secret_names=dest_data.get('secret_names') or dest_data.get('secretNames'),
+                secret_names_cache_ttl=dest_data.get('secret_names_cache_ttl') or
+                                      dest_data.get('secretNamesCacheTTL') or 300,
+                kms_key_id=dest_data.get('kms_key_id') or dest_data.get('kmsKeyId'),
+                variables=variables
+            )
+            destinations.append(dest)
+        except (TypeError, ConfigurationError) as e:
+            raise ConfigurationError(f"Invalid destination {i} in secret '{config.config_secret}': {e}")
+
+    # Update config in-place
+    config.destinations = destinations
 
 
 def is_cross_account(destination: DestinationConfig) -> bool:

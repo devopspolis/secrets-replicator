@@ -220,3 +220,7 @@ credentials
 # Local test data
 test-secrets/
 local-sedfiles/
+# Private keys and secrets
+rsa-private-key
+*.pem
+*.key

@@ -38,85 +38,6 @@ Globals:
     Tracing: Active
 
 Parameters:
-  Destinations:
-    Type: String
-    Description: |
-      JSON-encoded list of destination configurations for multi-region replication.
-      Example: '[{"region":"us-east-1","secretNames":"secrets-replicator/names/us-east-1"},{"region":"eu-west-1"}]'
-      Leave empty to use legacy single-destination parameters (DestinationRegion, etc.).
-    Default: ''
-
-  SecretsFilter:
-    Type: String
-    Description: |
-      Comma-separated list of Secrets Manager secret names containing filter configurations.
-      Each filter secret should contain JSON key-value mappings of secret patterns to transformation names.
-      Example: secrets-replicator/filters/production,secrets-replicator/filters/databases
-      Leave empty to replicate all secrets (not recommended for production).
-    Default: ''
-
-  SecretsFilterCacheTTL:
-    Type: Number
-    Description: Cache TTL for filter configuration in seconds (default 300 = 5 minutes)
-    Default: 300
-    MinValue: 0
-    MaxValue: 3600
-
-  DestinationRegion:
-    Type: String
-    Description: AWS region for destination secret
-    Default: us-west-2
-
-  DestSecretNames:
-    Type: String
-    Description: |
-      Comma-separated list of Secrets Manager secret names containing name mapping configurations.
-      Each mapping secret should contain JSON key-value mappings of source names to destination names.
-      Example: secrets-replicator/names/production,secrets-replicator/names/special
-      Leave empty to use source name as destination name (standard DR/HA pattern).
-    Default: ''
-
-  DestSecretNamesCacheTTL:
-    Type: Number
-    Description: Cache TTL for name mapping configuration in seconds (default 300 = 5 minutes)
-    Default: 300
-    MinValue: 0
-    MaxValue: 3600
-
-  DestinationAccountRoleArn:
-    Type: String
-    Description: IAM role ARN in destination account for cross-account replication (leave empty for same-account)
-    Default: ''
-
-  TransformMode:
-    Type: String
-    Description: |
-      Transformation mode: 'auto' (auto-detect from content), 'sed' (regex), or 'json' (JSONPath).
-      Default 'auto' detects JSON transformations (keys starting with $.) vs sed patterns.
-    Default: auto
-    AllowedValues:
-      - auto
-      - sed
-      - json
-
-  LogLevel:
-    Type: String
-    Description: Log level for Lambda function
-    Default: INFO
-    AllowedValues:
-      - DEBUG
-      - INFO
-      - WARN
-      - ERROR
-
-  EnableMetrics:
-    Type: String
-    Description: Enable CloudWatch custom metrics
-    Default: 'true'
-    AllowedValues:
-      - 'true'
-      - 'false'
-
   Environment:
     Type: String
     Description: Deployment environment (dev, qa, or prod)
@@ -137,17 +58,7 @@ Resources:
       Description: Replicate secrets across regions/accounts with transformations
       MemorySize: 256
       Environment:
-        Variables:
-          DESTINATIONS: !Ref Destinations
-          DEST_REGION: !Ref DestinationRegion
-          DEST_SECRET_NAMES: !Ref DestSecretNames
-          DEST_SECRET_NAMES_CACHE_TTL: !Ref DestSecretNamesCacheTTL
-          DEST_ACCOUNT_ROLE_ARN: !Ref DestinationAccountRoleArn
-          TRANSFORM_MODE: !Ref TransformMode
-          LOG_LEVEL: !Ref LogLevel
-          ENABLE_METRICS: !Ref EnableMetrics
-          SECRETS_FILTER: !Ref SecretsFilter
-          SECRETS_FILTER_CACHE_TTL: !Ref SecretsFilterCacheTTL
+        Variables: {}
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
@@ -161,6 +72,23 @@ Resources:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
               Resource: '*'
+
+            # Read destinations config secret (for loading destination configurations)
+            - Sid: ReadDestinationsConfig
+              Effect: Allow
+              Action:
+                - secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/config/*'
+
+            # DENY write to config secrets (defense-in-depth security layer)
+            - Sid: DenyWriteConfigSecrets
+              Effect: Deny
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:DeleteSecret
+              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/config/*'
 
             # Read transformation secrets (for loading transformation rules)
             - Sid: ReadTransformationSecrets
@@ -235,7 +163,7 @@ Resources:
                 StringEquals:
                   'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
 
-            # KMS permissions for encrypting destination secrets
+            # KMS permissions for encrypting destination secrets (any region)
             - Sid: KMSEncryptDestination
               Effect: Allow
               Action:
@@ -244,10 +172,8 @@ Resources:
                 - kms:DescribeKey
               Resource: '*'
               Condition:
-                StringEquals:
-                  'kms:ViaService':
-                    - !Sub 'secretsmanager.${DestinationRegion}.amazonaws.com'
-                    - !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
+                StringLike:
+                  'kms:ViaService': 'secretsmanager.*.amazonaws.com'
 
             # Assume role for cross-account (if configured)
             - Sid: AssumeDestinationRole

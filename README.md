@@ -427,6 +427,415 @@ aws lambda update-function-configuration \
 
 ---
 
+## Secret Filtering and Name Mapping
+
+**IMPORTANT**: The `secret_names` configuration serves a **dual purpose** - it acts as BOTH a filter (which secrets to replicate) AND a name mapper (what names to use).
+
+### How secret_names Works
+
+When you configure `secret_names` for a destination:
+
+1. **Filtering**: Only secrets matching a pattern in the mapping will be replicated to that destination
+2. **Name Mapping**: Matched secrets will be replicated with the transformed name from the mapping
+
+**Key Behavior**:
+- **If `secret_names` is configured**: Only secrets matching a pattern are replicated
+- **If `secret_names` is NOT configured**: All secrets are replicated with the same name (standard DR pattern)
+
+### Example: Filter and Map Secrets
+
+**Name Mapping Secret** (`secrets-replicator/names/us-west-2`):
+```json
+{
+  "app/*": "app/*",
+  "database/prod/*": "database/prod/*",
+  "critical-secret-1": "critical-secret-1"
+}
+```
+
+**Destination Configuration**:
+```json
+[
+  {
+    "region": "us-west-2",
+    "secret_names": "secrets-replicator/names/us-west-2"
+  }
+]
+```
+
+**Replication Behavior**:
+- `app/myapp` → ✅ Replicated to us-west-2 as `app/myapp` (matches `app/*`)
+- `database/prod/master` → ✅ Replicated to us-west-2 as `database/prod/master` (matches `database/prod/*`)
+- `critical-secret-1` → ✅ Replicated to us-west-2 as `critical-secret-1` (exact match)
+- `test/myapp` → ❌ NOT replicated (doesn't match any pattern)
+- `staging/config` → ❌ NOT replicated (doesn't match any pattern)
+
+**System Secrets Always Excluded**:
+The Lambda function automatically excludes these prefixes (hardcoded):
+- `secrets-replicator/transformations/`
+- `secrets-replicator/filters/`
+- `secrets-replicator/config/`
+- `secrets-replicator/names/`
+
+---
+
+## Secret Name Mapping
+
+Secret name mapping allows you to replicate secrets with different names in the destination. This is useful for:
+
+- **Environment Promotion**: Map `app-config-dev` → `app-config-prod`
+- **Naming Conventions**: Match different naming standards across accounts/regions
+- **Multi-Tenancy**: Replicate one secret to multiple destination names
+- **Namespace Isolation**: Add region/environment prefixes (e.g., `config` → `us-west-2/config`)
+
+### How It Works
+
+1. Create a name mapping secret containing a JSON object mapping source → destination names
+2. Reference the mapping secret in your destination configuration using `secret_names`
+3. When replicating, the Lambda function checks the mapping and uses the destination name if found
+
+**Mapping Priority**:
+1. **Name mapping secret** (if `secret_names` is configured) - highest priority
+2. **Same name** (default behavior) - source name = destination name
+
+### Name Mapping Secret Format
+
+The name mapping secret must contain a JSON object with source-to-destination mappings:
+
+```json
+{
+  "source-secret-name-1": "destination-secret-name-1",
+  "source-secret-name-2": "destination-secret-name-2",
+  "app/dev/database": "app/prod/database",
+  "shared-secret": "us-west-2/shared-secret"
+}
+```
+
+**Rules**:
+- **Keys**: Source secret names or patterns (case-sensitive)
+- **Values**: Destination secret names or patterns
+- **Missing mappings**: If source secret not in mapping, uses same name
+- **Wildcards Supported**: Patterns like `app/*`, `*/prod`, `legacy-*` are supported
+- **Matching Order**: Exact matches are checked first, then patterns in order
+
+**Pattern Matching**:
+- **Exact match**: `"mysecret"` matches only `"mysecret"`
+- **Prefix wildcard**: `"app/*"` matches `"app/prod"`, `"app/staging/db"`, etc.
+- **Suffix wildcard**: `"*/prod"` matches `"app/prod"`, `"db/prod"`, etc.
+- **Middle wildcard**: `"app/*/db"` matches `"app/prod/db"`, `"app/staging/db"`, etc.
+- **Multiple wildcards**: `"app/*/prod/*"` matches `"app/team1/prod/db"`, etc.
+
+### Example 1: Environment Promotion
+
+**Scenario**: Promote secrets from `dev` to `prod` with different naming.
+
+**Name Mapping Secret** (`secrets-replicator/names/prod-mappings`):
+```json
+{
+  "app-config-dev": "app-config-prod",
+  "db-credentials-dev": "db-credentials-prod",
+  "api-keys-dev": "api-keys-prod"
+}
+```
+
+**Destination Configuration**:
+```json
+[
+  {
+    "region": "us-east-1",
+    "secret_names": "secrets-replicator/names/prod-mappings"
+  }
+]
+```
+
+**Setup**:
+```bash
+# 1. Create name mapping secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/names/prod-mappings \
+  --description "Dev to Prod name mappings" \
+  --secret-string '{
+    "app-config-dev":"app-config-prod",
+    "db-credentials-dev":"db-credentials-prod",
+    "api-keys-dev":"api-keys-prod"
+  }' \
+  --region us-east-1
+
+# 2. Create/update destination configuration
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{
+    "region":"us-east-1",
+    "secret_names":"secrets-replicator/names/prod-mappings"
+  }]' \
+  --region us-east-1
+
+# 3. Update source secret (triggers replication)
+aws secretsmanager put-secret-value \
+  --secret-id app-config-dev \
+  --secret-string '{"api":"https://api.dev.example.com"}' \
+  --region us-east-1
+
+# 4. Verify destination secret has mapped name
+aws secretsmanager get-secret-value \
+  --secret-id app-config-prod \
+  --query SecretString \
+  --output text \
+  --region us-east-1
+```
+
+**Result**: `app-config-dev` is replicated to `app-config-prod` in `us-east-1`.
+
+### Example 2: Multi-Region with Region-Specific Names
+
+**Scenario**: Replicate secrets to multiple regions with region prefixes.
+
+**Name Mapping Secret for us-west-2** (`secrets-replicator/names/us-west-2`):
+```json
+{
+  "shared/database-config": "us-west-2/database-config",
+  "shared/api-keys": "us-west-2/api-keys"
+}
+```
+
+**Name Mapping Secret for eu-west-1** (`secrets-replicator/names/eu-west-1`):
+```json
+{
+  "shared/database-config": "eu-west-1/database-config",
+  "shared/api-keys": "eu-west-1/api-keys"
+}
+```
+
+**Destination Configuration**:
+```json
+[
+  {
+    "region": "us-west-2",
+    "secret_names": "secrets-replicator/names/us-west-2"
+  },
+  {
+    "region": "eu-west-1",
+    "secret_names": "secrets-replicator/names/eu-west-1"
+  }
+]
+```
+
+**Result**:
+- Source `shared/database-config` (us-east-1) → `us-west-2/database-config` (us-west-2)
+- Source `shared/database-config` (us-east-1) → `eu-west-1/database-config` (eu-west-1)
+
+### Example 3: Cross-Account with Account-Specific Names
+
+**Scenario**: Replicate secrets to DR account with account-specific naming.
+
+**Name Mapping Secret** (`secrets-replicator/names/dr-account`):
+```json
+{
+  "prod/app-config": "dr-prod/app-config",
+  "prod/database": "dr-prod/database"
+}
+```
+
+**Destination Configuration**:
+```json
+[
+  {
+    "region": "us-east-1",
+    "account_role_arn": "arn:aws:iam::999888777666:role/SecretsReplicatorDestRole",
+    "secret_names": "secrets-replicator/names/dr-account"
+  }
+]
+```
+
+**Setup**:
+```bash
+# In source account (123456789012)
+aws secretsmanager create-secret \
+  --name secrets-replicator/names/dr-account \
+  --secret-string '{
+    "prod/app-config":"dr-prod/app-config",
+    "prod/database":"dr-prod/database"
+  }' \
+  --region us-east-1
+```
+
+**Result**: `prod/app-config` in account 123456789012 → `dr-prod/app-config` in account 999888777666.
+
+### Example 4: Partial Mappings (Mixed Behavior)
+
+**Name Mapping Secret**:
+```json
+{
+  "app-config": "app-config-v2",
+  "database-credentials": "db-creds"
+}
+```
+
+**Behavior**:
+- ✅ `app-config` → `app-config-v2` (mapped)
+- ✅ `database-credentials` → `db-creds` (mapped)
+- ✅ `other-secret` → `other-secret` (not in mapping, uses same name)
+
+### Example 5: Wildcard Pattern Mappings
+
+**Scenario**: Map all secrets matching patterns without explicit enumeration.
+
+**Name Mapping Secret** (`secrets-replicator/names/wildcard-mappings`):
+```json
+{
+  "app/*": "my-app/*",
+  "*/prod": "*/production",
+  "legacy-*": "new-*",
+  "team/*/db": "database/*/config"
+}
+```
+
+**Behavior Examples**:
+
+| Source Secret | Pattern Matched | Destination Secret |
+|---------------|----------------|-------------------|
+| `app/config` | `app/*` | `my-app/config` |
+| `app/team1/settings` | `app/*` | `my-app/team1/settings` |
+| `services/prod` | `*/prod` | `services/production` |
+| `legacy-service` | `legacy-*` | `new-service` |
+| `team/alpha/db` | `team/*/db` | `database/alpha/config` |
+| `other/secret` | (no match) | `other/secret` (unchanged) |
+
+**Pattern Matching Rules**:
+- Patterns checked in order (exact matches first, then patterns)
+- First matching pattern wins
+- `*` matches any sequence of characters (including `/`)
+- Wildcards in destination are replaced with matched content from source
+
+**Example with Multiple Wildcards**:
+```json
+{
+  "app/*/prod/*": "my-app/*/production/*"
+}
+```
+- `app/team1/prod/db` → `my-app/team1/production/db`
+- `app/x/prod/y/z` → `my-app/x/production/y/z`
+
+**Combining Exact and Pattern Matches**:
+```json
+{
+  "critical-secret": "prod-critical-secret",
+  "app/*": "my-app/*",
+  "*": "archived/*"
+}
+```
+- `critical-secret` → `prod-critical-secret` (exact match priority)
+- `app/config` → `my-app/config` (pattern match)
+- `other/secret` → `archived/other/secret` (catch-all pattern)
+
+**Setup**:
+```bash
+# Create wildcard mapping secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/names/wildcard-mappings \
+  --description "Wildcard pattern name mappings" \
+  --secret-string '{
+    "app/*":"my-app/*",
+    "*/prod":"*/production",
+    "legacy-*":"new-*"
+  }' \
+  --region us-east-1
+
+# Use in destination configuration
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{
+    "region":"us-west-2",
+    "secret_names":"secrets-replicator/names/wildcard-mappings"
+  }]' \
+  --region us-east-1
+```
+
+**When to Use Wildcards**:
+- ✅ **Many secrets with predictable naming**: `app/team1/*`, `app/team2/*`, etc.
+- ✅ **Environment/region prefixing**: Map `dev/*` → `prod/*`
+- ✅ **Legacy migration**: Rename all `old-*` → `new-*`
+- ❌ **Few secrets**: Use exact matches (simpler, faster)
+- ❌ **Complex conditional logic**: Consider transformation secrets instead
+
+### Caching
+
+Name mapping secrets are cached in Lambda memory with configurable TTL:
+
+**Default TTL**: 300 seconds (5 minutes)
+
+**Per-Destination Override**:
+```json
+[
+  {
+    "region": "us-west-2",
+    "secret_names": "secrets-replicator/names/us-west-2",
+    "secret_names_cache_ttl": 600
+  }
+]
+```
+
+**Cache Behavior**:
+- First access: Load from Secrets Manager (~100ms)
+- Subsequent accesses: Serve from memory cache (~1ms)
+- After TTL expires: Reload from Secrets Manager
+- Cache per mapping secret (different secrets = different cache entries)
+
+**When to Adjust TTL**:
+- ✅ **Increase TTL (600-3600s)**: Rarely-changing mappings, reduce API calls
+- ✅ **Decrease TTL (60-120s)**: Frequently-changing mappings, faster updates
+- ✅ **Keep default (300s)**: Most use cases
+
+### Updating Name Mappings
+
+```bash
+# Update name mapping secret
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/names/prod-mappings \
+  --secret-string '{
+    "app-config-dev":"app-config-prod",
+    "new-secret-dev":"new-secret-prod"
+  }' \
+  --region us-east-1
+
+# Changes take effect after cache TTL expires (default 300 seconds)
+# Or force immediate refresh by restarting Lambda (cold start clears cache)
+```
+
+### Best Practices
+
+1. **Use Descriptive Mapping Secret Names**: `secrets-replicator/names/{destination}` pattern recommended
+2. **Version Mappings**: Use Secrets Manager versioning to track changes
+3. **Test Before Production**: Verify mappings with test secrets first
+4. **Document Mappings**: Add description field when creating mapping secrets
+5. **Consistent Naming**: Establish naming convention across environments
+6. **Avoid Circular Mappings**: Don't map `A` → `B` and `B` → `A` (undefined behavior)
+
+### Troubleshooting
+
+#### Problem: Secret not replicated with expected name
+
+**Check**: Verify mapping secret content
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id secrets-replicator/names/prod-mappings \
+  --query SecretString \
+  --output text | jq .
+```
+
+**Check**: Look for source secret name in mapping (case-sensitive!)
+```bash
+# If source is "App-Config" but mapping has "app-config", no match!
+```
+
+#### Problem: Mapping changes not taking effect
+
+**Cause**: Mapping cached in Lambda memory
+
+**Solution**: Wait for cache TTL to expire, or update destination config to force Lambda restart
+
+---
+
 ## Use Cases
 
 ### Use Case 1: Cross-Region Disaster Recovery
@@ -946,6 +1355,239 @@ Use JSONPath expressions to map specific fields.
 4. **Avoid overly broad patterns**: Be specific to prevent unintended replacements
 
 5. **Document transformations**: Include comments in sedfiles
+
+### Variable Expansion
+
+**NEW**: Transform secrets can now include variable references that are expanded dynamically for each destination using the `${VARIABLE}` syntax.
+
+#### Why Variable Expansion?
+
+Without variables, you need separate transformation secrets for each destination region:
+```bash
+# ❌ Old approach: One transformation secret per destination
+secrets-replicator/transformations/us-east-1-to-us-west-2
+secrets-replicator/transformations/us-east-1-to-eu-west-1
+secrets-replicator/transformations/us-east-1-to-ap-south-1
+```
+
+With variables, one transformation secret works for all destinations:
+```bash
+# ✅ New approach: One transformation secret for all destinations
+secrets-replicator/transformations/region-swap
+# Content: s/us-east-1/${REGION}/g
+```
+
+#### Available Variables
+
+**Core Variables** (automatically provided for all transformations):
+
+| Variable | Description | Example Value |
+|----------|-------------|---------------|
+| `${REGION}` | Destination region | `us-west-2` |
+| `${SOURCE_REGION}` | Source region | `us-east-1` |
+| `${SECRET_NAME}` | Source secret name | `my-app/db-config` |
+| `${DEST_SECRET_NAME}` | Destination secret name (after name mapping) | `my-app/db-config-west` |
+| `${ACCOUNT_ID}` | Destination AWS account ID | `123456789012` |
+| `${SOURCE_ACCOUNT_ID}` | Source AWS account ID | `999999999999` |
+
+**Custom Variables**: Define per-destination variables in the destinations configuration (see Configuration section).
+
+#### Variable Expansion Examples
+
+**Example 1: Region-Aware Transformations**
+
+Create a single transformation secret that adapts to each destination region:
+
+```bash
+# Create transformation secret with variable
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/adaptive-region-swap \
+  --secret-string 's/us-east-1/${REGION}/g' \
+  --region us-east-1
+```
+
+When this transformation is applied:
+- For destination `us-west-2`: Expands to `s/us-east-1/us-west-2/g`
+- For destination `eu-west-1`: Expands to `s/us-east-1/eu-west-1/g`
+- For destination `ap-south-1`: Expands to `s/us-east-1/ap-south-1/g`
+
+**Example 2: Multi-Variable Sed Transformation**
+
+Replace multiple patterns using different variables:
+
+```bash
+# Create transformation with multiple variables
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/comprehensive-swap \
+  --secret-string '# Swap regions
+s/${SOURCE_REGION}/${REGION}/g
+
+# Update RDS endpoints with destination region
+s/rds\.${SOURCE_REGION}\.amazonaws\.com/rds.${REGION}.amazonaws.com/g
+
+# Update S3 bucket references
+s/my-bucket-${SOURCE_REGION}/my-bucket-${REGION}/g' \
+  --region us-east-1
+```
+
+**Example 3: JSON Transformation with Variables**
+
+Use variables in JSON field mappings:
+
+```json
+{
+  "transformations": [
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.database.host",
+      "find": "db.us-east-1.amazonaws.com",
+      "replace": "db.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.metadata.source_region",
+      "find": "unknown",
+      "replace": "${SOURCE_REGION}"
+    },
+    {
+      "path": "$.metadata.dest_account",
+      "find": "000000000000",
+      "replace": "${ACCOUNT_ID}"
+    }
+  ]
+}
+```
+
+```bash
+# Create JSON transformation secret
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/json-with-variables \
+  --secret-string "$(cat <<'EOF'
+{
+  "transformations": [
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.database.host",
+      "find": "db.us-east-1.amazonaws.com",
+      "replace": "db.${REGION}.amazonaws.com"
+    }
+  ]
+}
+EOF
+)" \
+  --region us-east-1
+```
+
+**Example 4: Custom Variables**
+
+Define custom variables per destination for application-specific transformations:
+
+```bash
+# Create configuration with custom variables
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[
+  {
+    "region": "us-west-2",
+    "variables": {
+      "ENV": "production",
+      "DB_INSTANCE": "prod-db-west",
+      "API_DOMAIN": "api.prod.west.example.com"
+    }
+  },
+  {
+    "region": "eu-west-1",
+    "variables": {
+      "ENV": "production",
+      "DB_INSTANCE": "prod-db-eu",
+      "API_DOMAIN": "api.prod.eu.example.com"
+    }
+  }
+]' \
+  --region us-east-1
+
+# Create transformation using custom variables
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/custom-var-transform \
+  --secret-string '# Update environment
+s/dev/${ENV}/g
+
+# Update database instance
+s/dev-db-1/${DB_INSTANCE}/g
+
+# Update API domain
+s/api\.dev\.example\.com/${API_DOMAIN}/g' \
+  --region us-east-1
+```
+
+#### Variable Syntax Rules
+
+1. **Pattern**: Variables must match `${VARIABLE_NAME}`
+2. **Naming**: Variable names must:
+   - Start with a letter or underscore
+   - Contain only uppercase letters, numbers, and underscores
+   - Example: `${REGION}`, `${DB_HOST_1}`, `${_CUSTOM_VAR}`
+3. **Case-Sensitive**: Variable names are case-sensitive (must be uppercase)
+4. **Error Handling**: Undefined variables raise an error with a helpful message listing all available variables
+
+**Invalid Examples**:
+- `${region}` - ❌ Lowercase (not matched)
+- `${1INVALID}` - ❌ Starts with number (not matched)
+- `${Region}` - ❌ Mixed case (not matched)
+- `$REGION` - ❌ Missing braces (not expanded)
+- `{REGION}` - ❌ Missing dollar sign (not expanded)
+
+#### Testing Variable Expansion
+
+Test variable expansion locally before deployment:
+
+```bash
+# Test sed transformation with variable substitution
+echo '{"host":"db.us-east-1.amazonaws.com"}' | \
+  sed 's/us-east-1/us-west-2/g'
+# Output: {"host":"db.us-west-2.amazonaws.com"}
+
+# Test multiple variable substitution
+REGION="eu-west-1"
+SOURCE_REGION="us-east-1"
+echo "s/${SOURCE_REGION}/${REGION}/g" | \
+  sed "s/\${SOURCE_REGION}/$SOURCE_REGION/g; s/\${REGION}/$REGION/g"
+# Output: s/us-east-1/eu-west-1/g
+```
+
+#### Variable Expansion Troubleshooting
+
+**Error: "Undefined variable"**
+```
+VariableExpansionError: Undefined variable: ${DB_HOST}. Available variables: REGION, SOURCE_REGION, SECRET_NAME, DEST_SECRET_NAME, ACCOUNT_ID, SOURCE_ACCOUNT_ID
+```
+
+**Solution**: Either:
+1. Use one of the core variables listed in the error message
+2. Define the custom variable in the destination configuration:
+   ```json
+   {
+     "region": "us-west-2",
+     "variables": {
+       "DB_HOST": "prod-db.example.com"
+     }
+   }
+   ```
+
+**Variable not expanding (passes through unchanged)**
+
+If you see `${REGION}` in your replicated secret instead of the actual region value:
+1. Check variable name is uppercase: `${REGION}` not `${region}`
+2. Check syntax: `${VARIABLE}` not `$VARIABLE` or `{VARIABLE}`
+3. Check the transformation secret was loaded correctly
+4. Review CloudWatch logs for variable expansion errors
 
 ---
 

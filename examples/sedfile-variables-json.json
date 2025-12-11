@@ -1,0 +1,64 @@
+{
+  "transformations": [
+    {
+      "path": "$.database.region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.database.host",
+      "find": "db.us-east-1.amazonaws.com",
+      "replace": "db.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.database.endpoint",
+      "find": "rds.us-east-1.amazonaws.com",
+      "replace": "rds.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.cache.redis.endpoint",
+      "find": "redis.us-east-1.cache.amazonaws.com",
+      "replace": "redis.${REGION}.cache.amazonaws.com"
+    },
+    {
+      "path": "$.s3.bucket_region",
+      "find": "us-east-1",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.s3.endpoint",
+      "find": "s3.us-east-1.amazonaws.com",
+      "replace": "s3.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.metadata.source_region",
+      "find": "unknown",
+      "replace": "${SOURCE_REGION}"
+    },
+    {
+      "path": "$.metadata.dest_region",
+      "find": "unknown",
+      "replace": "${REGION}"
+    },
+    {
+      "path": "$.metadata.replication_source",
+      "find": "none",
+      "replace": "${SOURCE_REGION}"
+    },
+    {
+      "path": "$.sqs.queue_url",
+      "find": "sqs.us-east-1.amazonaws.com",
+      "replace": "sqs.${REGION}.amazonaws.com"
+    },
+    {
+      "path": "$.sns.topic_arn",
+      "find": "arn:aws:sns:us-east-1:123456789012:my-topic",
+      "replace": "arn:aws:sns:${REGION}:${ACCOUNT_ID}:my-topic"
+    },
+    {
+      "path": "$.kms.key_arn",
+      "find": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012",
+      "replace": "arn:aws:kms:${REGION}:${ACCOUNT_ID}:key/12345678-1234-1234-1234-123456789012"
+    }
+  ]
+}
