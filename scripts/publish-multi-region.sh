@@ -134,37 +134,31 @@ for REGION in $REGIONS; do
     --region ${REGION}
 
   # Restore SAR metadata (sam package strips it)
+  # Using sed/grep to avoid YAML parsing issues with CloudFormation intrinsic functions
   echo "Restoring SAR metadata to packaged template..."
-  $(which python3) -c "
-import yaml
-import sys
 
-# Read original template
-with open('template.yaml', 'r') as f:
-    original = yaml.safe_load(f)
+  if grep -q "^Metadata:" template.yaml; then
+    # Remove any existing Metadata section from packaged template
+    sed -i.bak '/^Metadata:/,/^[A-Z]/{ /^Metadata:/d; /^[A-Z]/!d; }' "packaged-${REGION}.yaml"
 
-# Read packaged template
-with open('packaged-${REGION}.yaml', 'r') as f:
-    packaged = yaml.safe_load(f)
-
-# Copy Metadata section
-if 'Metadata' in original:
-    packaged['Metadata'] = original['Metadata']
+    # Extract Metadata section from original template
+    sed -n '/^Metadata:/,/^[A-Z]/{ /^[A-Z]/!p; /^Metadata:/p; }' template.yaml > metadata-temp.yaml
 
     # Override version if specified
-    override_version = '${OVERRIDE_VERSION}'
-    if override_version:
-        if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
-            packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = override_version
-            print(f'Version overridden to: {override_version}', file=sys.stderr)
+    if [ -n "$OVERRIDE_VERSION" ]; then
+      sed -i.bak "s/SemanticVersion:.*/SemanticVersion: ${OVERRIDE_VERSION}/" metadata-temp.yaml
+      echo "Version overridden to: ${OVERRIDE_VERSION}" >&2
+    fi
 
-# Write back
-with open('packaged-${REGION}.yaml', 'w') as f:
-    yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
-" || {
-    echo "Error: PyYAML not installed. Please run: pip3 install pyyaml"
-    exit 1
-  }
+    # Insert Metadata section after Transform line
+    sed -i.bak "/^Transform:/r metadata-temp.yaml" "packaged-${REGION}.yaml"
+
+    # Cleanup
+    rm -f metadata-temp.yaml "packaged-${REGION}.yaml.bak"
+    echo "✅ Metadata section restored"
+  else
+    echo "⚠️  No Metadata section found in template.yaml"
+  fi
 
   # Publish to SAR
   echo "Publishing to SAR in ${REGION}..."

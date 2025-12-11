@@ -218,30 +218,28 @@ jobs:
 
       - name: Restore SAR metadata with version
         run: |
-          python3 << 'EOF'
-          import yaml
-          import sys
+          # Extract Metadata section from original template and append to packaged template
+          # This avoids YAML parsing issues with CloudFormation intrinsic functions
 
-          # Read original template
-          with open('template.yaml', 'r') as f:
-              original = yaml.safe_load(f)
+          # Check if Metadata section exists in original template
+          if grep -q "^Metadata:" template.yaml; then
+            echo "Extracting Metadata section from template.yaml..."
 
-          # Read packaged template
-          with open('packaged-qa.yaml', 'r') as f:
-              packaged = yaml.safe_load(f)
+            # Remove any existing Metadata section from packaged template
+            sed -i '/^Metadata:/,/^[A-Z]/{ /^Metadata:/d; /^[A-Z]/!d; }' packaged-qa.yaml
 
-          # Copy and update Metadata section
-          if 'Metadata' in original:
-              packaged['Metadata'] = original['Metadata']
-              # Override version
-              if 'AWS::ServerlessRepo::Application' in packaged['Metadata']:
-                  packaged['Metadata']['AWS::ServerlessRepo::Application']['SemanticVersion'] = '${{ needs.setup.outputs.version }}'
-                  print(f'Version set to: ${{ needs.setup.outputs.version }}', file=sys.stderr)
+            # Extract Metadata section from original and update version
+            sed -n '/^Metadata:/,/^[A-Z]/{ /^[A-Z]/!p; /^Metadata:/p; }' template.yaml | \
+              sed "s/SemanticVersion:.*/SemanticVersion: ${{ needs.setup.outputs.version }}/" > metadata.yaml
 
-          # Write back
-          with open('packaged-qa.yaml', 'w') as f:
-              yaml.dump(packaged, f, default_flow_style=False, sort_keys=False)
-          EOF
+            # Insert Metadata after AWSTemplateFormatVersion
+            sed -i "/^Transform:/r metadata.yaml" packaged-qa.yaml
+
+            rm -f metadata.yaml
+            echo "✅ Metadata section restored with version ${{ needs.setup.outputs.version }}"
+          else
+            echo "⚠️  No Metadata section found in template.yaml"
+          fi
 
       - name: Upload packaged template to S3
         run: |

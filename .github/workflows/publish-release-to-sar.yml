@@ -1,8 +1,10 @@
-name: Publish to SAR
+name: Publish Release to SAR
+
+# This workflow should ONLY trigger manually for production releases.
+# Do NOT trigger on GitHub releases automatically to avoid publishing
+# pre-releases or QA test releases to the public SAR.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -56,40 +58,26 @@ jobs:
           echo "Account: ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "Region: ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Extract version from release tag
+      - name: Set version
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            # Extract from release tag (strip 'v' prefix if present)
-            TAG_NAME="${{ github.event.release.tag_name }}"
-            VERSION="${TAG_NAME#v}"
-            MAKE_PUBLIC="true"
-            echo "Source: GitHub Release tag ${TAG_NAME}"
-          else
-            # Manual workflow dispatch
-            VERSION="${{ github.event.inputs.version }}"
-            MAKE_PUBLIC="${{ github.event.inputs.make_public }}"
-            echo "Source: Manual input"
-          fi
+          VERSION="${{ github.event.inputs.version }}"
+          # Strip 'v' prefix if present
+          VERSION="${VERSION#v}"
 
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "make_public=${MAKE_PUBLIC}" >> $GITHUB_OUTPUT
+          echo "make_public=${{ github.event.inputs.make_public }}" >> $GITHUB_OUTPUT
 
           echo "### Publishing Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Make Public:** ${MAKE_PUBLIC}" >> $GITHUB_STEP_SUMMARY
+          echo "**Make Public:** ${{ github.event.inputs.make_public }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Parse regions
         id: regions
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            # Default regions for automated releases
-            REGIONS="us-east-1 us-west-2"
-          else
-            # User-specified regions (convert comma to space)
-            REGIONS="${{ github.event.inputs.regions }}"
-            REGIONS="${REGIONS//,/ }"
-          fi
+          # User-specified regions (convert comma to space)
+          REGIONS="${{ github.event.inputs.regions }}"
+          REGIONS="${REGIONS//,/ }"
 
           echo "regions=${REGIONS}" >> $GITHUB_OUTPUT
           echo "**Regions:** ${REGIONS}" >> $GITHUB_STEP_SUMMARY
