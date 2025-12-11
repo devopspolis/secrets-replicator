@@ -98,9 +98,7 @@
         "lambda:ListTags"
       ],
       "Resource": [
-        "arn:aws:lambda:*:737549531315:function:secrets-replicator-dev-*",
-        "arn:aws:lambda:*:737549531315:function:secrets-replicator-qa-*",
-        "arn:aws:lambda:*:737549531315:function:secrets-replicator-prod-*"
+        "arn:aws:lambda:*:737549531315:function:secrets-replicator"
       ]
     },
     {

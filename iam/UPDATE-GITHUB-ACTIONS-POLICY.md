@@ -12,15 +12,22 @@ arn:aws:cloudformation:us-west-2:aws:transform/Serverless-2016-10-31
 
 ## Root Cause
 
-The `github-actions-role` IAM policy is missing permission to create CloudFormation changesets on the **SAM transform resource**. SAM (Serverless Application Model) uses a CloudFormation transform (`AWS::Serverless-2016-10-31`) to expand serverless resources, and this transform requires explicit permission.
+The `github-actions-role` IAM policy has two issues:
+
+1. **Missing SAM Transform Permission**: The policy is missing permission to create CloudFormation changesets on the **SAM transform resource**. SAM (Serverless Application Model) uses a CloudFormation transform (`AWS::Serverless-2016-10-31`) to expand serverless resources, and this transform requires explicit permission.
+
+2. **Incorrect Lambda Function Resource Pattern**: The policy expected `secrets-replicator-dev-*` but the actual function name is `secrets-replicator` (no environment suffix). This is a deliberate design decision documented in `NAMING-CONVENTIONS.md`.
 
 ## Solution
 
-Add a new IAM policy statement that grants `cloudformation:CreateChangeSet` permission on the SAM transform resource.
+1. Add a new IAM policy statement that grants `cloudformation:CreateChangeSet` permission on the SAM transform resource
+2. Fix the Lambda function resource ARN to match the actual function name: `secrets-replicator`
 
 ## What Changed
 
-The new policy file `github-actions-role-policy-FIXED.json` includes a new statement:
+The new policy file `github-actions-role-policy-FIXED.json` includes:
+
+### 1. New SAM Transform Statement
 
 ```json
 {
@@ -35,7 +42,30 @@ The new policy file `github-actions-role-policy-FIXED.json` includes a new state
 }
 ```
 
-Additional minor improvements:
+### 2. Fixed Lambda Resource ARN
+
+**Before (WRONG)**:
+```json
+{
+  "Resource": [
+    "arn:aws:lambda:*:737549531315:function:secrets-replicator-dev-*",
+    "arn:aws:lambda:*:737549531315:function:secrets-replicator-qa-*",
+    "arn:aws:lambda:*:737549531315:function:secrets-replicator-prod-*"
+  ]
+}
+```
+
+**After (CORRECT)**:
+```json
+{
+  "Resource": [
+    "arn:aws:lambda:*:737549531315:function:secrets-replicator"
+  ]
+}
+```
+
+### 3. Additional Minor Improvements
+
 - Added `lambda:ListTags` to Lambda permissions
 - Added `sqs:GetQueueUrl` to SQS permissions
 - Added `logs:TagResource` and `logs:UntagResource` to CloudWatch Logs permissions
