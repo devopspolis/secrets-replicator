@@ -219,6 +219,7 @@ Resources:
                 - AWS Service Event
               detail:
                 eventName:
+                  - CreateSecret
                   - PutSecretValue
                   - UpdateSecret
                   - ReplicateSecretToRegions
