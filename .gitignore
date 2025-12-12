@@ -212,6 +212,9 @@ samconfig.toml
 packaged.yaml
 packaged-*.yaml
 
+# Generated template (created from sam_template.yml during build)
+template.yaml
+
 # AWS credentials (never commit)
 credentials
 *.pem

@@ -175,6 +175,20 @@ jobs:
           echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
 
+      - name: Generate template.yaml from sam_template.yml
+        run: |
+          echo "### Generating template.yaml..." >> $GITHUB_STEP_SUMMARY
+
+          VERSION="${{ needs.setup.outputs.version }}"
+          SEMANTIC_VERSION="${VERSION}"
+
+          sed \
+            -e "s/%%VERSION%%/v${VERSION}/g" \
+            -e "s/%%SEMANTIC_VERSION%%/${SEMANTIC_VERSION}/g" \
+            sam_template.yml > template.yaml
+
+          echo "✅ Template created with version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+
       - name: Build application
         run: |
           echo "### Building Application..." >> $GITHUB_STEP_SUMMARY

@@ -6,16 +6,16 @@ Description: >
 
 Metadata:
   AWS::ServerlessRepo::Application:
-    Name: secrets-replicator
+    Name: 'secrets-replicator -- version %%VERSION%%'
     Description: >
       Event-driven AWS Secrets Manager replication with transformation across regions and accounts.
       Fill the gap in AWS native replication by transforming secret values during replication.
     Author: Devopspolis
     SpdxLicenseId: MIT
-    LicenseUrl: LICENSE
-    ReadmeUrl: README.md
+    LicenseUrl: ./LICENSE
+    ReadmeUrl: ./README.md
     HomePageUrl: https://github.com/devopspolis/secrets-replicator
-    SemanticVersion: 0.1.2
+    SemanticVersion: %%SEMANTIC_VERSION%%
     SourceCodeUrl: https://github.com/devopspolis/secrets-replicator
     Labels:
       - secrets
@@ -47,6 +47,11 @@ Parameters:
       - qa
       - prod
 
+  ApplicationVersion:
+    Type: String
+    Description: Application version (set automatically during deployment)
+    Default: '%%SEMANTIC_VERSION%%'
+
 Resources:
   # Lambda Function
   SecretReplicatorFunction:
@@ -55,13 +60,17 @@ Resources:
       FunctionName: secrets-replicator
       CodeUri: src/
       Handler: handler.lambda_handler
-      Description: Replicate secrets across regions/accounts with transformations
+      Description: Replicate secrets across regions/accounts with transformations (%%VERSION%%)
       MemorySize: 256
       Environment:
-        Variables: {}
+        Variables:
+          APP_VERSION: !Ref ApplicationVersion
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
+      Tags:
+        Application: SecretsReplicator
+        Version: !Ref ApplicationVersion
       Policies:
         - Version: '2012-10-17'
           Statement:
@@ -225,6 +234,8 @@ Resources:
       Tags:
         - Key: Application
           Value: SecretsReplicator
+        - Key: Version
+          Value: !Ref ApplicationVersion
 
   # CloudWatch Alarm for DLQ
   DeadLetterQueueAlarm:
@@ -322,8 +333,19 @@ Resources:
       TopicName: !Sub ${AWS::StackName}-alerts
       DisplayName: Secrets Replicator Alerts
       KmsMasterKeyId: alias/aws/sns
+      Tags:
+        - Key: Application
+          Value: SecretsReplicator
+        - Key: Version
+          Value: !Ref ApplicationVersion
 
 Outputs:
+  ApplicationVersion:
+    Description: Deployed application version
+    Value: !Ref ApplicationVersion
+    Export:
+      Name: !Sub ${AWS::StackName}-Version
+
   SecretReplicatorFunctionArn:
     Description: ARN of the Secret Replicator Lambda function
     Value: !GetAtt SecretReplicatorFunction.Arn

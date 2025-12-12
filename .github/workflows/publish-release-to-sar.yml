@@ -87,6 +87,20 @@ jobs:
         with:
           use-installer: true
 
+      - name: Create template from sam_template.yml
+        run: |
+          echo "### Creating template.yaml from sam_template.yml..." >> $GITHUB_STEP_SUMMARY
+
+          VERSION="${{ steps.version.outputs.version }}"
+          SEMANTIC_VERSION="${{ steps.version.outputs.version }}"
+
+          sed \
+            -e "s/%%VERSION%%/v${VERSION}/g" \
+            -e "s/%%SEMANTIC_VERSION%%/${SEMANTIC_VERSION}/g" \
+            sam_template.yml > template.yaml
+
+          echo "✅ Template created with version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+
       - name: Upload README and LICENSE to S3
         run: |
           echo "### Uploading README and LICENSE..." >> $GITHUB_STEP_SUMMARY
