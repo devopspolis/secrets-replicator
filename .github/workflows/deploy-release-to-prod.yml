@@ -7,16 +7,6 @@ on:
         description: 'Version to promote from QA (e.g., 1.0.0)'
         required: true
         type: string
-      publish_to_sar:
-        description: 'Publish to SAR and make public'
-        required: false
-        type: boolean
-        default: true
-      sar_regions:
-        description: 'SAR regions (comma-separated)'
-        required: false
-        type: string
-        default: 'us-east-1,us-west-2'
 
 permissions:
   id-token: write
@@ -32,8 +22,6 @@ jobs:
       version: ${{ steps.set_version.outputs.version }}
       s3_bucket: ${{ steps.set_s3.outputs.s3_bucket }}
       s3_uri: ${{ steps.set_s3.outputs.s3_uri }}
-      publish_to_sar: ${{ steps.set_sar.outputs.publish_to_sar }}
-      sar_regions: ${{ steps.set_sar.outputs.sar_regions }}
 
     steps:
       - name: Set environment
@@ -50,19 +38,12 @@ jobs:
 
           echo "### Promoting to Production" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Publish to SAR:** ${{ github.event.inputs.publish_to_sar }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Set S3 configuration
         id: set_s3
         run: |
           echo "s3_bucket=secrets-replicator-builds" >> $GITHUB_OUTPUT
           echo "s3_uri=s3://secrets-replicator-builds/releases/${{ steps.set_version.outputs.version }}/packaged-qa.yaml" >> $GITHUB_OUTPUT
-
-      - name: Set SAR configuration
-        id: set_sar
-        run: |
-          echo "publish_to_sar=${{ github.event.inputs.publish_to_sar }}" >> $GITHUB_OUTPUT
-          echo "sar_regions=${{ github.event.inputs.sar_regions }}" >> $GITHUB_OUTPUT
 
   promote-from-qa:
     name: Promote Package from QA
@@ -155,183 +136,15 @@ jobs:
             --query 'Stacks[0].Outputs' \
             --output table >> $GITHUB_STEP_SUMMARY
 
-  publish-to-sar:
-    name: Publish to SAR
-    runs-on: ubuntu-latest
-    needs: [setup, promote-from-qa, deploy-to-prod]
-    if: needs.setup.outputs.publish_to_sar == 'true'
-    environment: prod
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Install PyYAML
-        run: pip3 install pyyaml
-
-      - name: Set up SAM CLI
-        uses: aws-actions/setup-sam@v2
-        with:
-          use-installer: true
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
-          aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: GitHubActions-SAR-${{ github.run_id }}
-
-      - name: Parse regions
-        id: regions
+      - name: Deployment summary
         run: |
-          REGIONS="${{ needs.setup.outputs.sar_regions }}"
-          REGIONS="${REGIONS//,/ }"  # Convert comma to space
-          echo "regions=${REGIONS}" >> $GITHUB_OUTPUT
-          echo "### Publishing to SAR" >> $GITHUB_STEP_SUMMARY
-          echo "**Regions:** ${REGIONS}" >> $GITHUB_STEP_SUMMARY
-
-      - name: Download package from GitHub artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.promote-from-qa.outputs.artifact_name }}
-
-      - name: Prepare SAR template
-        run: |
-          echo "### Using Tested Package from QA..." >> $GITHUB_STEP_SUMMARY
-          echo "✅ Same package deployed to QA and Production" >> $GITHUB_STEP_SUMMARY
-
-          # Use packaged-qa.yaml for SAR publishing
-          cp packaged-qa.yaml packaged-sar.yaml
-
-      - name: Upload README and LICENSE to SAR buckets
-        run: |
-          echo "### Uploading README and LICENSE..." >> $GITHUB_STEP_SUMMARY
-
-          for REGION in ${{ steps.regions.outputs.regions }}; do
-            BUCKET="secrets-replicator-sar-${REGION}"
-
-            # Create bucket if it doesn't exist
-            if ! aws s3 ls "s3://${BUCKET}" --region ${REGION} 2>/dev/null; then
-              echo "Creating bucket: ${BUCKET}"
-              if [ "${REGION}" = "us-east-1" ]; then
-                aws s3 mb "s3://${BUCKET}" --region ${REGION}
-              else
-                aws s3api create-bucket \
-                  --bucket "${BUCKET}" \
-                  --region ${REGION} \
-                  --create-bucket-configuration LocationConstraint=${REGION}
-              fi
-
-              # Set bucket policy for SAR access
-              aws s3api put-bucket-policy \
-                --bucket "${BUCKET}" \
-                --policy "{
-                  \"Version\": \"2012-10-17\",
-                  \"Statement\": [
-                    {
-                      \"Effect\": \"Allow\",
-                      \"Principal\": {\"Service\": \"serverlessrepo.amazonaws.com\"},
-                      \"Action\": \"s3:GetObject\",
-                      \"Resource\": \"arn:aws:s3:::${BUCKET}/*\"
-                    },
-                    {
-                      \"Effect\": \"Allow\",
-                      \"Principal\": \"*\",
-                      \"Action\": \"s3:GetObject\",
-                      \"Resource\": \"arn:aws:s3:::${BUCKET}/*\",
-                      \"Condition\": {\"Bool\": {\"aws:SecureTransport\": \"true\"}}
-                    }
-                  ]
-                }" \
-                --region ${REGION}
-
-              # Adjust public access blocks
-              aws s3api put-public-access-block \
-                --bucket "${BUCKET}" \
-                --public-access-block-configuration \
-                  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=false,RestrictPublicBuckets=false \
-                --region ${REGION}
-            fi
-
-            echo "Uploading files to ${BUCKET}..."
-            aws s3 cp README.md "s3://${BUCKET}/README.md" --region ${REGION}
-            aws s3 cp LICENSE "s3://${BUCKET}/LICENSE" --region ${REGION}
-
-            echo "- ✅ ${REGION}" >> $GITHUB_STEP_SUMMARY
-          done
-
-      - name: Publish to SAR (all regions)
-        run: |
-          echo "### Publishing to SAR..." >> $GITHUB_STEP_SUMMARY
-
-          for REGION in ${{ steps.regions.outputs.regions }}; do
-            echo "Publishing to ${REGION}..."
-
-            # Update S3 URLs for this region's SAR bucket
-            python3 << EOF
-          import yaml
-
-          with open('packaged-sar.yaml', 'r') as f:
-              template = yaml.safe_load(f)
-
-          # Update SAR metadata URLs for this region
-          if 'Metadata' in template and 'AWS::ServerlessRepo::Application' in template['Metadata']:
-              template['Metadata']['AWS::ServerlessRepo::Application']['LicenseUrl'] = 's3://secrets-replicator-sar-${REGION}/LICENSE'
-              template['Metadata']['AWS::ServerlessRepo::Application']['ReadmeUrl'] = 's3://secrets-replicator-sar-${REGION}/README.md'
-
-          with open('packaged-sar-${REGION}.yaml', 'w') as f:
-              yaml.dump(template, f, default_flow_style=False, sort_keys=False)
-          EOF
-
-            # Publish to SAR
-            OUTPUT=$(sam publish \
-              --template "packaged-sar-${REGION}.yaml" \
-              --region ${REGION} \
-              2>&1 || true)
-
-            echo "$OUTPUT"
-
-            # Extract application ARN
-            APP_ARN=$(echo "$OUTPUT" | grep -o "arn:aws:serverlessrepo:${REGION}:[^:]*:applications/secrets-replicator" || echo "")
-
-            if [ -n "$APP_ARN" ]; then
-              echo "✅ Published to ${REGION}" >> $GITHUB_STEP_SUMMARY
-              echo "   ARN: ${APP_ARN}" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "⚠️  Publish may have failed in ${REGION}" >> $GITHUB_STEP_SUMMARY
-            fi
-
-            rm -f "packaged-sar-${REGION}.yaml"
-          done
-
-      - name: Make application public
-        run: |
-          echo "### Making Application Public..." >> $GITHUB_STEP_SUMMARY
-
-          for REGION in ${{ steps.regions.outputs.regions }}; do
-            aws serverlessrepo put-application-policy \
-              --application-id arn:aws:serverlessrepo:${REGION}:${{ vars.AWS_ACCOUNT_ID }}:applications/secrets-replicator \
-              --statements Principals='*',Actions=Deploy \
-              --region ${REGION}
-
-            CONSOLE_URL="https://console.aws.amazon.com/serverlessrepo/home?region=${REGION}#/published-applications/arn:aws:serverlessrepo:${REGION}:${{ vars.AWS_ACCOUNT_ID }}:applications~secrets-replicator"
-            echo "- ✅ [${REGION}](${CONSOLE_URL})" >> $GITHUB_STEP_SUMMARY
-          done
-
-      - name: Create SAR summary
-        run: |
-          echo "## 🎉 Production Release Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "## 🎉 Production Deployment Complete!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**SAR Regions:** ${{ steps.regions.outputs.regions }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Visibility:** Public" >> $GITHUB_STEP_SUMMARY
+          echo "**Stack:** secrets-replicator-prod" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Consumers can now deploy from SAR" >> $GITHUB_STEP_SUMMARY
-          for REGION in ${{ steps.regions.outputs.regions }}; do
-            echo "- [${REGION} - Available Applications](https://console.aws.amazon.com/serverlessrepo/home?region=${REGION}#/available-applications)" >> $GITHUB_STEP_SUMMARY
-          done
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. Validate functionality in production environment" >> $GITHUB_STEP_SUMMARY
+          echo "2. Monitor CloudWatch metrics and alarms" >> $GITHUB_STEP_SUMMARY
+          echo "3. When ready to publish publicly, trigger 'Publish to SAR' workflow" >> $GITHUB_STEP_SUMMARY
