@@ -133,12 +133,25 @@ jobs:
           echo "### Using QA Package" >> $GITHUB_STEP_SUMMARY
           echo "✅ Package retrieved from QA account (via environment switching)" >> $GITHUB_STEP_SUMMARY
 
+      - name: Re-package for Production
+        run: |
+          echo "### Re-packaging for Production..." >> $GITHUB_STEP_SUMMARY
+          echo "This uploads Lambda code to prod S3 bucket and updates CodeUri" >> $GITHUB_STEP_SUMMARY
+
+          sam package \
+            --template-file packaged-qa.yaml \
+            --output-template-file packaged-prod.yaml \
+            --s3-bucket secrets-replicator-builds-prod \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "✅ Template re-packaged with prod S3 URIs" >> $GITHUB_STEP_SUMMARY
+
       - name: Deploy to Production
         run: |
           echo "### Deploying to Production..." >> $GITHUB_STEP_SUMMARY
 
           sam deploy \
-            --template-file packaged-qa.yaml \
+            --template-file packaged-prod.yaml \
             --stack-name secrets-replicator-prod \
             --region ${{ vars.AWS_REGION }} \
             --capabilities CAPABILITY_IAM \
