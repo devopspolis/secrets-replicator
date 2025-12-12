@@ -58,12 +58,12 @@ jobs:
         run: |
           echo "### Generating template.yaml..." >> $GITHUB_STEP_SUMMARY
 
-          # Use dev version format: 0.0.0-dev-{build_number}
-          VERSION="0.0.0-dev-${{ github.run_number }}"
+          # Use dev version format: {build_number}
+          VERSION="${{ github.run_number }}"
           SEMANTIC_VERSION="${VERSION}"
 
           sed \
-            -e "s/%%VERSION%%/v${VERSION}/g" \
+            -e "s/%%VERSION%%/${VERSION}/g" \
             -e "s/%%SEMANTIC_VERSION%%/${SEMANTIC_VERSION}/g" \
             sam_template.yml > template.yaml
 
