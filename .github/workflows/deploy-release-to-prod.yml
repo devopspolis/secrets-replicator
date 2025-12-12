@@ -48,13 +48,39 @@ jobs:
   promote-from-qa:
     name: Promote Package from QA
     needs: setup
-    uses: devopspolis/promote-s3-artifact.yml@main
-    with:
-      environment: qa
-      s3_uri: ${{ needs.setup.outputs.s3_uri }}
-      artifact_name: packaged-template-${{ needs.setup.outputs.version }}
-      artifact_file: packaged-qa.yaml
-    secrets: inherit
+    runs-on: ubuntu-latest
+    environment: qa
+    outputs:
+      artifact_name: ${{ steps.set_artifact.outputs.artifact_name }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: GitHubActions-Prod-Promote-${{ github.run_id }}
+
+      - name: Download package from S3
+        run: |
+          S3_URI="${{ needs.setup.outputs.s3_uri }}"
+          echo "### Downloading Package from QA..." >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** ${S3_URI}" >> $GITHUB_STEP_SUMMARY
+
+          aws s3 cp "${S3_URI}" packaged-qa.yaml --region ${{ vars.AWS_REGION }}
+
+          echo "✅ Package retrieved from QA S3" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set artifact name
+        id: set_artifact
+        run: echo "artifact_name=packaged-template-${{ needs.setup.outputs.version }}" >> $GITHUB_OUTPUT
+
+      - name: Upload as GitHub artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-template-${{ needs.setup.outputs.version }}
+          path: packaged-qa.yaml
+          retention-days: 90
 
   approval:
     name: Approval
