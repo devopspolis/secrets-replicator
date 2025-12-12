@@ -216,29 +216,20 @@ jobs:
 
           echo "**Package Location:** s3://${S3_BUCKET}/${S3_PREFIX}/" >> $GITHUB_STEP_SUMMARY
 
-      - name: Restore SAR metadata with version
+      - name: Remove SAR metadata (not needed for CloudFormation deployment)
         run: |
-          # Extract Metadata section from original template and append to packaged template
-          # This avoids YAML parsing issues with CloudFormation intrinsic functions
+          # SAR metadata (AWS::ServerlessRepo::Application) is only needed when publishing to SAR
+          # For regular CloudFormation deployments, it causes errors because it references
+          # README.md and LICENSE files that aren't included in the deployment package
 
-          # Check if Metadata section exists in original template
-          if grep -q "^Metadata:" template.yaml; then
-            echo "Extracting Metadata section from template.yaml..."
+          echo "Removing SAR metadata from packaged template..."
 
-            # Remove any existing Metadata section from packaged template
+          if grep -q "^Metadata:" packaged-qa.yaml; then
+            # Remove entire Metadata section
             sed -i '/^Metadata:/,/^[A-Z]/{ /^Metadata:/d; /^[A-Z]/!d; }' packaged-qa.yaml
-
-            # Extract Metadata section from original and update version
-            sed -n '/^Metadata:/,/^[A-Z]/{ /^[A-Z]/!p; /^Metadata:/p; }' template.yaml | \
-              sed "s/SemanticVersion:.*/SemanticVersion: ${{ needs.setup.outputs.version }}/" > metadata.yaml
-
-            # Insert Metadata after AWSTemplateFormatVersion
-            sed -i "/^Transform:/r metadata.yaml" packaged-qa.yaml
-
-            rm -f metadata.yaml
-            echo "✅ Metadata section restored with version ${{ needs.setup.outputs.version }}"
+            echo "✅ SAR metadata removed (not needed for QA deployment)"
           else
-            echo "⚠️  No Metadata section found in template.yaml"
+            echo "ℹ️  No Metadata section found in packaged template"
           fi
 
       - name: Upload packaged template to S3
