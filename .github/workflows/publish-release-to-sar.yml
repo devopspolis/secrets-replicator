@@ -33,8 +33,46 @@ jobs:
     environment: prod
 
     steps:
-      - name: Checkout code
+      - name: Set version and git ref
+        id: version
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          # Strip 'v' prefix if present for semantic version
+          VERSION="${VERSION#v}"
+
+          # Ensure git ref has 'v' prefix for tag
+          if [[ ! "${{ github.event.inputs.version }}" =~ ^v ]]; then
+            GIT_REF="v${VERSION}"
+          else
+            GIT_REF="${{ github.event.inputs.version }}"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "git_ref=${GIT_REF}" >> $GITHUB_OUTPUT
+          echo "make_public=${{ github.event.inputs.make_public }}" >> $GITHUB_OUTPUT
+
+          echo "### Publishing Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Git Tag:** ${GIT_REF}" >> $GITHUB_STEP_SUMMARY
+          echo "**Make Public:** ${{ github.event.inputs.make_public }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Checkout code at release tag
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Verify tag exists
+        run: |
+          TAG_REF="${{ steps.version.outputs.git_ref }}"
+          if ! git rev-parse "${TAG_REF}" >/dev/null 2>&1; then
+            echo "❌ ERROR: Git tag ${TAG_REF} does not exist!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Available tags:" >> $GITHUB_STEP_SUMMARY
+            git tag -l | tail -10 >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "✅ Tag ${TAG_REF} exists" >> $GITHUB_STEP_SUMMARY
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,20 +95,6 @@ jobs:
           echo "### AWS Identity ✅" >> $GITHUB_STEP_SUMMARY
           echo "Account: ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "Region: ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-
-      - name: Set version
-        id: version
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          # Strip 'v' prefix if present
-          VERSION="${VERSION#v}"
-
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "make_public=${{ github.event.inputs.make_public }}" >> $GITHUB_OUTPUT
-
-          echo "### Publishing Version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
-          echo "**Make Public:** ${{ github.event.inputs.make_public }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Parse regions
         id: regions
