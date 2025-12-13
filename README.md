@@ -445,6 +445,8 @@ When you configure `secret_names` for a destination:
 ### Example: Filter and Map Secrets
 
 **Name Mapping Secret** (`secrets-replicator/names/us-west-2`):
+
+**Option 1: Using matching wildcards** (clearer intent):
 ```json
 {
   "app/*": "app/*",
@@ -452,6 +454,17 @@ When you configure `secret_names` for a destination:
   "critical-secret-1": "critical-secret-1"
 }
 ```
+
+**Option 2: Using empty strings** (when keeping same name):
+```json
+{
+  "app/*": "",
+  "database/prod/*": "",
+  "critical-secret-1": ""
+}
+```
+
+Both options produce the same result - secrets keep their original names. The wildcard in the destination value (`"app/*"`) tells the system to preserve the matched portion.
 
 **Destination Configuration**:
 ```json
@@ -464,11 +477,11 @@ When you configure `secret_names` for a destination:
 ```
 
 **Replication Behavior**:
-- `app/myapp` → ✅ Replicated to us-west-2 as `app/myapp` (matches `app/*`)
+- `app/myapp` → ✅ Replicated to us-west-2 as `app/myapp` (matches `app/*`, wildcard preserved)
 - `database/prod/master` → ✅ Replicated to us-west-2 as `database/prod/master` (matches `database/prod/*`)
 - `critical-secret-1` → ✅ Replicated to us-west-2 as `critical-secret-1` (exact match)
-- `test/myapp` → ❌ NOT replicated (doesn't match any pattern)
-- `staging/config` → ❌ NOT replicated (doesn't match any pattern)
+- `test/myapp` → ❌ NOT replicated (doesn't match any pattern - **filtering behavior**)
+- `staging/config` → ❌ NOT replicated (doesn't match any pattern - **filtering behavior**)
 
 **System Secrets Always Excluded**:
 The Lambda function automatically excludes these prefixes (hardcoded):
@@ -507,23 +520,33 @@ The name mapping secret must contain a JSON object with source-to-destination ma
   "source-secret-name-1": "destination-secret-name-1",
   "source-secret-name-2": "destination-secret-name-2",
   "app/dev/database": "app/prod/database",
-  "shared-secret": "us-west-2/shared-secret"
+  "shared-secret": "us-west-2/shared-secret",
+  "app/*": "my-app/*",
+  "keep-same-name": ""
 }
 ```
 
 **Rules**:
 - **Keys**: Source secret names or patterns (case-sensitive)
 - **Values**: Destination secret names or patterns
-- **Missing mappings**: If source secret not in mapping, uses same name
-- **Wildcards Supported**: Patterns like `app/*`, `*/prod`, `legacy-*` are supported
+- **Empty string value (`""`)**: Uses source name (useful for filtering while keeping same name)
+- **Wildcards in destination**: Matched portions from source are preserved (e.g., `"app/*"` → `"my-app/*"`)
+- **Missing mappings**: If `secret_names` is configured and source not in mapping, secret is NOT replicated (filtering behavior)
 - **Matching Order**: Exact matches are checked first, then patterns in order
 
-**Pattern Matching**:
+**Pattern Matching (Source Patterns)**:
 - **Exact match**: `"mysecret"` matches only `"mysecret"`
 - **Prefix wildcard**: `"app/*"` matches `"app/prod"`, `"app/staging/db"`, etc.
 - **Suffix wildcard**: `"*/prod"` matches `"app/prod"`, `"db/prod"`, etc.
 - **Middle wildcard**: `"app/*/db"` matches `"app/prod/db"`, `"app/staging/db"`, etc.
 - **Multiple wildcards**: `"app/*/prod/*"` matches `"app/team1/prod/db"`, etc.
+
+**Destination Pattern Transformation**:
+When the destination pattern contains wildcards, the matched portions from the source are substituted:
+- Source: `"app/prod/db"` matching pattern `"app/*"` with destination `"my-app/*"` → Result: `"my-app/prod/db"`
+- Source: `"app/prod"` matching pattern `"*/prod"` with destination `"*/production"` → Result: `"app/production"`
+- Source: `"legacy-app"` matching pattern `"legacy-*"` with destination `"new-*"` → Result: `"new-app"`
+- Source: `"app/prod/db"` matching pattern `"app/*"` with destination `"app/*"` → Result: `"app/prod/db"` (keeps same name)
 
 ### Example 1: Environment Promotion
 
