@@ -150,6 +150,11 @@ for REGION in $REGIONS; do
       echo "Version overridden to: ${OVERRIDE_VERSION}" >&2
     fi
 
+    # Update README and LICENSE URLs to S3 paths
+    sed -i.bak "s|LicenseUrl:.*|LicenseUrl: s3://${BUCKET_NAME}/LICENSE|" metadata-temp.yaml
+    sed -i.bak "s|ReadmeUrl:.*|ReadmeUrl: s3://${BUCKET_NAME}/README.md|" metadata-temp.yaml
+    echo "Updated README and LICENSE URLs to S3 paths" >&2
+
     # Insert Metadata section after Transform line
     sed -i.bak "/^Transform:/r metadata-temp.yaml" "packaged-${REGION}.yaml"
 
