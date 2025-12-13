@@ -14,7 +14,7 @@ on:
       regions:
         description: 'Regions to publish (comma-separated)'
         required: false
-        default: 'us-east-1,us-west-2'
+        default: 'us-east-1'
         type: string
       make_public:
         description: 'Make application public'
