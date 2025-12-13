@@ -258,8 +258,6 @@ jobs:
             --capabilities CAPABILITY_IAM \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset \
-            --parameter-overrides \
-              Environment=prod \
             --tags \
               Environment=prod \
               Version=${{ needs.setup.outputs.version }} \

@@ -37,20 +37,9 @@ Globals:
       - x86_64
     Tracing: Active
 
-Parameters:
-  Environment:
-    Type: String
-    Description: Deployment environment (dev, qa, or prod)
-    Default: dev
-    AllowedValues:
-      - dev
-      - qa
-      - prod
-
-  ApplicationVersion:
-    Type: String
-    Description: Application version (set automatically during deployment)
-    Default: '%%SEMANTIC_VERSION%%'
+# No parameters needed for SAR deployment
+# Version is automatically set from SAR semantic version
+# For CI/CD workflows, pass parameters via --parameter-overrides
 
 Resources:
   # Lambda Function
@@ -64,13 +53,13 @@ Resources:
       MemorySize: 256
       Environment:
         Variables:
-          APP_VERSION: !Ref ApplicationVersion
+          APP_VERSION: '%%SEMANTIC_VERSION%%'
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
       Tags:
         Application: SecretsReplicator
-        Version: !Ref ApplicationVersion
+        Version: '%%SEMANTIC_VERSION%%'
       Policies:
         - Version: '2012-10-17'
           Statement:
@@ -236,7 +225,7 @@ Resources:
         - Key: Application
           Value: SecretsReplicator
         - Key: Version
-          Value: !Ref ApplicationVersion
+          Value: '%%SEMANTIC_VERSION%%'
 
   # CloudWatch Alarm for DLQ
   DeadLetterQueueAlarm:
@@ -338,12 +327,12 @@ Resources:
         - Key: Application
           Value: SecretsReplicator
         - Key: Version
-          Value: !Ref ApplicationVersion
+          Value: '%%SEMANTIC_VERSION%%'
 
 Outputs:
   ApplicationVersion:
     Description: Deployed application version
-    Value: !Ref ApplicationVersion
+    Value: '%%SEMANTIC_VERSION%%'
     Export:
       Name: !Sub ${AWS::StackName}-Version
 
