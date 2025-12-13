@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to promote from QA (e.g., 1.0.0)'
+        description: 'Version to deploy (e.g., 1.0.0 - must match a git tag)'
         required: true
         type: string
 
@@ -20,8 +20,8 @@ jobs:
     outputs:
       environment: ${{ steps.set_environment.outputs.environment }}
       version: ${{ steps.set_version.outputs.version }}
+      git_ref: ${{ steps.set_git_ref.outputs.git_ref }}
       s3_bucket: ${{ steps.set_s3.outputs.s3_bucket }}
-      s3_uri: ${{ steps.set_s3.outputs.s3_uri }}
 
     steps:
       - name: Set environment
@@ -36,55 +36,172 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
-          echo "### Promoting to Production" >> $GITHUB_STEP_SUMMARY
+          echo "### Deploying to Production" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** \`${VERSION}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set git ref
+        id: set_git_ref
+        run: |
+          VERSION="${{ github.event.inputs.version }}"
+          # Ensure it has 'v' prefix for git tag
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            GIT_REF="v${VERSION}"
+          else
+            GIT_REF="${VERSION}"
+          fi
+          echo "git_ref=${GIT_REF}" >> $GITHUB_OUTPUT
+          echo "**Git Tag:** ${GIT_REF}" >> $GITHUB_STEP_SUMMARY
 
       - name: Set S3 configuration
         id: set_s3
         run: |
-          echo "s3_bucket=secrets-replicator-builds" >> $GITHUB_OUTPUT
-          echo "s3_uri=s3://secrets-replicator-builds/releases/${{ steps.set_version.outputs.version }}/packaged-qa.yaml" >> $GITHUB_OUTPUT
+          echo "s3_bucket=secrets-replicator-builds-prod" >> $GITHUB_OUTPUT
 
-  promote-from-qa:
-    name: Promote Package from QA
+  build-and-package:
+    name: Build and Package
     needs: setup
     runs-on: ubuntu-latest
-    environment: qa
-    outputs:
-      artifact_name: ${{ steps.set_artifact.outputs.artifact_name }}
+    environment: prod
 
     steps:
+      - name: Checkout code at release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup.outputs.git_ref }}
+          fetch-depth: 0
+
+      - name: Verify tag exists
+        run: |
+          TAG_REF="${{ needs.setup.outputs.git_ref }}"
+          if ! git rev-parse "${TAG_REF}" >/dev/null 2>&1; then
+            echo "❌ ERROR: Git tag ${TAG_REF} does not exist!" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Available tags:" >> $GITHUB_STEP_SUMMARY
+            git tag -l | tail -10 >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          echo "✅ Tag ${TAG_REF} exists" >> $GITHUB_STEP_SUMMARY
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip3 install pyyaml
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-role
           aws-region: ${{ vars.AWS_REGION }}
-          role-session-name: GitHubActions-Prod-Promote-${{ github.run_id }}
+          role-session-name: GitHubActions-Prod-Build-${{ github.run_id }}
 
-      - name: Download package from S3
+      - name: Verify AWS identity
         run: |
-          S3_URI="${{ needs.setup.outputs.s3_uri }}"
-          echo "### Downloading Package from QA..." >> $GITHUB_STEP_SUMMARY
-          echo "**Source:** ${S3_URI}" >> $GITHUB_STEP_SUMMARY
+          aws sts get-caller-identity
+          echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
 
-          aws s3 cp "${S3_URI}" packaged-qa.yaml --region ${{ vars.AWS_REGION }}
+      - name: Generate template.yaml from sam_template.yml
+        run: |
+          echo "### Generating template.yaml..." >> $GITHUB_STEP_SUMMARY
 
-          echo "✅ Package retrieved from QA S3" >> $GITHUB_STEP_SUMMARY
+          VERSION="${{ needs.setup.outputs.version }}"
+          SEMANTIC_VERSION="${VERSION}"
 
-      - name: Set artifact name
-        id: set_artifact
-        run: echo "artifact_name=packaged-template-${{ needs.setup.outputs.version }}" >> $GITHUB_OUTPUT
+          sed \
+            -e "s/%%VERSION%%/v${VERSION}/g" \
+            -e "s/%%SEMANTIC_VERSION%%/${SEMANTIC_VERSION}/g" \
+            sam_template.yml > template.yaml
 
-      - name: Upload as GitHub artifact
+          echo "✅ Template created with version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Build application
+        run: |
+          echo "### Building Application..." >> $GITHUB_STEP_SUMMARY
+          sam build
+
+      - name: Package application (upload to S3)
+        run: |
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_PREFIX="releases/${{ needs.setup.outputs.version }}"
+
+          # Create bucket if it doesn't exist
+          if ! aws s3 ls "s3://${S3_BUCKET}" --region ${{ vars.AWS_REGION }} 2>/dev/null; then
+            echo "Creating builds bucket: ${S3_BUCKET}"
+            if [ "${{ vars.AWS_REGION }}" = "us-east-1" ]; then
+              aws s3 mb "s3://${S3_BUCKET}" --region ${{ vars.AWS_REGION }}
+            else
+              aws s3api create-bucket \
+                --bucket "${S3_BUCKET}" \
+                --region ${{ vars.AWS_REGION }} \
+                --create-bucket-configuration LocationConstraint=${{ vars.AWS_REGION }}
+            fi
+          fi
+
+          echo "### Packaging Application..." >> $GITHUB_STEP_SUMMARY
+
+          # Package with version-specific prefix
+          sam package \
+            --template-file .aws-sam/build/template.yaml \
+            --output-template-file packaged-prod.yaml \
+            --s3-bucket "${S3_BUCKET}" \
+            --s3-prefix "${S3_PREFIX}" \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "**Package Location:** s3://${S3_BUCKET}/${S3_PREFIX}/" >> $GITHUB_STEP_SUMMARY
+
+      - name: Remove SAR metadata (not needed for CloudFormation deployment)
+        run: |
+          # SAR metadata (AWS::ServerlessRepo::Application) is only needed when publishing to SAR
+          # For regular CloudFormation deployments, it causes errors because it references
+          # README.md and LICENSE files that aren't included in the deployment package
+
+          echo "Removing SAR metadata from packaged template..."
+
+          if grep -q "^Metadata:" packaged-prod.yaml; then
+            # Remove entire Metadata section
+            sed -i '/^Metadata:/,/^[A-Z]/{ /^Metadata:/d; /^[A-Z]/!d; }' packaged-prod.yaml
+            echo "✅ SAR metadata removed (not needed for production deployment)"
+          else
+            echo "ℹ️  No Metadata section found in packaged template"
+          fi
+
+      - name: Upload packaged template to S3
+        run: |
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_KEY="releases/${{ needs.setup.outputs.version }}/packaged-prod.yaml"
+
+          aws s3 cp packaged-prod.yaml "s3://${S3_BUCKET}/${S3_KEY}" \
+            --region ${{ vars.AWS_REGION }}
+
+          echo "### Package Uploaded to S3" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 URI:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Store packaged template as GitHub artifact
         uses: actions/upload-artifact@v4
         with:
-          name: packaged-template-${{ needs.setup.outputs.version }}
-          path: packaged-qa.yaml
+          name: packaged-prod-template-${{ needs.setup.outputs.version }}
+          path: packaged-prod.yaml
           retention-days: 90
+
+      - name: Build summary
+        run: |
+          echo "## 📦 Build Complete - Awaiting Approval" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Package:** s3://${{ needs.setup.outputs.s3_bucket }}/releases/${{ needs.setup.outputs.version }}/" >> $GITHUB_STEP_SUMMARY
+          echo "**GitHub Artifact:** packaged-prod-template-${{ needs.setup.outputs.version }}" >> $GITHUB_STEP_SUMMARY
 
   approval:
     name: Approval
-    needs: [setup, promote-from-qa]
+    needs: [setup, build-and-package]
     runs-on: ubuntu-latest
     environment: approval
     steps:
@@ -93,7 +210,7 @@ jobs:
 
   deploy-to-prod:
     name: Deploy to Production
-    needs: [setup, promote-from-qa, approval]
+    needs: [setup, build-and-package, approval]
     runs-on: ubuntu-latest
     environment: prod
 
@@ -118,33 +235,17 @@ jobs:
           echo "**Account:** ${{ vars.AWS_ACCOUNT_ID }}" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ vars.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Download package from GitHub artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ needs.promote-from-qa.outputs.artifact_name }}
-
-      - name: Verify package
+      - name: Download packaged template from S3
         run: |
-          if [ ! -f packaged-qa.yaml ]; then
-            echo "❌ ERROR: Package not found" >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
+          S3_BUCKET="${{ needs.setup.outputs.s3_bucket }}"
+          S3_KEY="releases/${{ needs.setup.outputs.version }}/packaged-prod.yaml"
 
-          echo "### Using QA Package" >> $GITHUB_STEP_SUMMARY
-          echo "✅ Package retrieved from QA account (via environment switching)" >> $GITHUB_STEP_SUMMARY
+          echo "### Downloading Package from S3..." >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** \`${{ needs.setup.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Source:** s3://${S3_BUCKET}/${S3_KEY}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Re-package for Production
-        run: |
-          echo "### Re-packaging for Production..." >> $GITHUB_STEP_SUMMARY
-          echo "This uploads Lambda code to prod S3 bucket and updates CodeUri" >> $GITHUB_STEP_SUMMARY
-
-          sam package \
-            --template-file packaged-qa.yaml \
-            --output-template-file packaged-prod.yaml \
-            --s3-bucket secrets-replicator-builds-prod \
+          aws s3 cp "s3://${S3_BUCKET}/${S3_KEY}" packaged-prod.yaml \
             --region ${{ vars.AWS_REGION }}
-
-          echo "✅ Template re-packaged with prod S3 URIs" >> $GITHUB_STEP_SUMMARY
 
       - name: Deploy to Production
         run: |
