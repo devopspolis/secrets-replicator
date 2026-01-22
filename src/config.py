@@ -78,6 +78,10 @@ class ReplicatorConfig:
     enable_metrics: bool = True                   # Enable CloudWatch metrics
     dlq_arn: Optional[str] = None                 # Dead Letter Queue ARN
 
+    # SECRETS_FILTER configuration
+    secrets_filter: Optional[str] = None          # Comma-separated list of filter secret names
+    secrets_filter_cache_ttl: int = 300           # Cache TTL in seconds (5 minutes)
+
     # Advanced options
     timeout_seconds: int = 5                      # Regex timeout
     max_secret_size: int = 65536                  # Max secret size (64KB)
@@ -202,6 +206,10 @@ def load_config_from_env() -> ReplicatorConfig:
     Environment variables:
         CONFIG_SECRET: Name of Secrets Manager secret containing configuration
             (default: 'secrets-replicator/config/destinations')
+        SECRETS_FILTER: Comma-separated list of filter secret names that map
+            secret patterns to transformation names. If not set, all secrets
+            pass through without transformation.
+        SECRETS_FILTER_CACHE_TTL: Cache TTL for filter config in seconds (default: 300)
         DEFAULT_SECRET_NAMES: Default name mapping secret for destinations
         DEFAULT_REGION: Default destination region
         DEFAULT_ROLE_ARN: Default cross-account IAM role ARN
@@ -237,6 +245,10 @@ def load_config_from_env() -> ReplicatorConfig:
     secret_names_cache_ttl = int(os.environ.get('SECRET_NAMES_CACHE_TTL', '300'))
     default_kms_key_id = os.environ.get('KMS_KEY_ID', '').strip() or None
 
+    # SECRETS_FILTER configuration
+    secrets_filter = os.environ.get('SECRETS_FILTER', '').strip() or None
+    secrets_filter_cache_ttl = int(os.environ.get('SECRETS_FILTER_CACHE_TTL', '300'))
+
     # Common parameters
     transform_mode = os.environ.get('TRANSFORM_MODE', 'auto').strip()
     log_level = os.environ.get('LOG_LEVEL', 'INFO').strip()
@@ -258,6 +270,8 @@ def load_config_from_env() -> ReplicatorConfig:
         log_level=log_level,
         enable_metrics=enable_metrics,
         dlq_arn=dlq_arn,
+        secrets_filter=secrets_filter,
+        secrets_filter_cache_ttl=secrets_filter_cache_ttl,
         timeout_seconds=timeout_seconds,
         max_secret_size=max_secret_size,
         default_secret_names=default_secret_names,

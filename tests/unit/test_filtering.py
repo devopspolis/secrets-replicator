@@ -1,16 +1,24 @@
 """
-Tests for filtering logic (Lambda-side filtering with tag support).
+Tests for filtering logic with SECRETS_FILTER support.
 
-Tests ADR-001 (Lambda-Side Filtering) and ADR-003 (Hardcoded Exclusion).
+Tests the new centralized filter configuration system that replaces tag-based filtering.
 """
 
 import pytest
-from src.handler import should_replicate
+from unittest.mock import MagicMock, patch
+from src.filters import (
+    should_replicate_secret,
+    load_filter_configuration,
+    get_cached_filters,
+    match_secret_pattern,
+    find_matching_filter,
+    clear_filter_cache
+)
 from src.config import parse_tag_filters, ReplicatorConfig, ConfigurationError
 
 
 class TestParseTagFilters:
-    """Test tag parsing helper function"""
+    """Test tag parsing helper function (still used for other purposes)"""
 
     def test_parse_empty_string(self):
         """Empty string returns empty list"""
@@ -60,293 +68,437 @@ class TestParseTagFilters:
             parse_tag_filters("key=")
 
 
-class TestShouldReplicateTransformationSecrets:
-    """Test hardcoded exclusion for transformation secrets (ADR-003)"""
+class TestMatchSecretPattern:
+    """Test glob pattern matching for secret names"""
+
+    def test_exact_match(self):
+        """Exact match (no wildcard)"""
+        assert match_secret_pattern("my-secret", "my-secret") is True
+        assert match_secret_pattern("my-secret", "other-secret") is False
+
+    def test_prefix_wildcard(self):
+        """Prefix wildcard pattern"""
+        assert match_secret_pattern("app/prod/db", "app/*") is True
+        assert match_secret_pattern("app/staging/db", "app/*") is True
+        assert match_secret_pattern("other/prod/db", "app/*") is False
+
+    def test_suffix_wildcard(self):
+        """Suffix wildcard pattern"""
+        assert match_secret_pattern("app/prod", "*/prod") is True
+        assert match_secret_pattern("db/prod", "*/prod") is True
+        assert match_secret_pattern("app/staging", "*/prod") is False
+
+    def test_middle_wildcard(self):
+        """Middle wildcard pattern"""
+        assert match_secret_pattern("app/prod/db", "app/*/db") is True
+        assert match_secret_pattern("app/staging/db", "app/*/db") is True
+        assert match_secret_pattern("app/prod/cache", "app/*/db") is False
+
+    def test_multiple_wildcards(self):
+        """Multiple wildcards in pattern"""
+        assert match_secret_pattern("app/team1/prod/db", "app/*/prod/*") is True
+        assert match_secret_pattern("app/team2/prod/cache", "app/*/prod/*") is True
+        assert match_secret_pattern("app/team1/dev/db", "app/*/prod/*") is False
+
+
+class TestFindMatchingFilter:
+    """Test filter pattern matching logic"""
+
+    def test_exact_match_priority(self):
+        """Exact match takes priority over wildcard"""
+        filters = {
+            "app/*": "default-transform",
+            "app/prod/db": "specific-transform"
+        }
+        assert find_matching_filter("app/prod/db", filters) == "specific-transform"
+
+    def test_wildcard_match(self):
+        """Wildcard pattern matching"""
+        filters = {
+            "app/prod/*": "region-swap",
+            "db/*": "connection-transform"
+        }
+        assert find_matching_filter("app/prod/api", filters) == "region-swap"
+        assert find_matching_filter("db/mysql", filters) == "connection-transform"
+
+    def test_no_match_returns_false(self):
+        """No matching pattern returns False"""
+        filters = {
+            "app/*": "region-swap"
+        }
+        assert find_matching_filter("other-secret", filters) is False
+
+    def test_empty_transformation(self):
+        """Empty/null transformation value returns None"""
+        filters = {
+            "critical-secret": None,
+            "app/*": ""
+        }
+        # Note: empty string is normalized to None during loading
+        assert find_matching_filter("critical-secret", filters) is None
+
+    def test_empty_filters(self):
+        """Empty filters dict returns False for any secret"""
+        assert find_matching_filter("any-secret", {}) is False
+
+
+class TestLoadFilterConfiguration:
+    """Test loading filter configuration from Secrets Manager"""
+
+    def test_load_single_filter_secret(self):
+        """Load filters from single secret"""
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/*": "region-swap", "db/*": "connection-transform"}'
+        )
+
+        filters = load_filter_configuration("secrets-replicator/filters/prod", mock_client)
+
+        assert filters == {
+            "app/*": "region-swap",
+            "db/*": "connection-transform"
+        }
+
+    def test_load_multiple_filter_secrets(self):
+        """Load and merge filters from multiple secrets"""
+        mock_client = MagicMock()
+        mock_client.get_secret.side_effect = [
+            MagicMock(secret_string='{"app/*": "transform-a"}'),
+            MagicMock(secret_string='{"db/*": "transform-b", "app/*": "transform-c"}')
+        ]
+
+        filters = load_filter_configuration(
+            "secrets-replicator/filters/a,secrets-replicator/filters/b",
+            mock_client
+        )
+
+        # Later filter overrides earlier one for app/*
+        assert filters == {
+            "app/*": "transform-c",
+            "db/*": "transform-b"
+        }
+
+    def test_load_empty_filter_list(self):
+        """Empty filter list returns empty dict"""
+        mock_client = MagicMock()
+        filters = load_filter_configuration("", mock_client)
+        assert filters == {}
+
+    def test_null_transformation_normalized(self):
+        """Null and empty string values are normalized to None"""
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"secret-a": null, "secret-b": ""}'
+        )
+
+        filters = load_filter_configuration("secrets-replicator/filters/test", mock_client)
+
+        assert filters == {
+            "secret-a": None,
+            "secret-b": None
+        }
+
+
+class TestGetCachedFilters:
+    """Test filter caching behavior"""
+
+    def setup_method(self):
+        """Clear cache before each test"""
+        clear_filter_cache()
+
+    def test_cache_miss_loads_filters(self):
+        """Cache miss triggers filter loading"""
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/*": "transform"}'
+        )
+
+        filters = get_cached_filters("secrets-replicator/filters/test", 300, mock_client)
+
+        assert filters == {"app/*": "transform"}
+        mock_client.get_secret.assert_called_once()
+
+    def test_cache_hit_skips_loading(self):
+        """Cache hit returns cached filters without loading"""
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/*": "transform"}'
+        )
+
+        # First call - cache miss
+        get_cached_filters("secrets-replicator/filters/test", 300, mock_client)
+        # Second call - cache hit
+        filters = get_cached_filters("secrets-replicator/filters/test", 300, mock_client)
+
+        assert filters == {"app/*": "transform"}
+        # Should only be called once due to caching
+        assert mock_client.get_secret.call_count == 1
+
+    def test_cache_invalidated_on_filter_list_change(self):
+        """Cache is invalidated when filter list changes"""
+        mock_client = MagicMock()
+        mock_client.get_secret.side_effect = [
+            MagicMock(secret_string='{"app/*": "transform-a"}'),
+            MagicMock(secret_string='{"db/*": "transform-b"}')
+        ]
+
+        # First call with filter-a
+        filters_a = get_cached_filters("secrets-replicator/filters/a", 300, mock_client)
+        # Second call with filter-b (different list)
+        filters_b = get_cached_filters("secrets-replicator/filters/b", 300, mock_client)
+
+        assert filters_a == {"app/*": "transform-a"}
+        assert filters_b == {"db/*": "transform-b"}
+        assert mock_client.get_secret.call_count == 2
+
+
+class TestShouldReplicateHardcodedExclusions:
+    """Test hardcoded exclusion for system secrets"""
+
+    def setup_method(self):
+        """Clear cache and create config before each test"""
+        clear_filter_cache()
+        self.config = ReplicatorConfig(destinations=[])
+        self.mock_client = MagicMock()
 
     def test_transformation_secret_excluded(self):
         """Transformation secrets are always excluded"""
-        config = ReplicatorConfig(dest_region='us-west-2')
-
-        assert should_replicate('secrets-replicator/transformations/my-sed', {}, config) is False
-        assert should_replicate('secrets-replicator/transformations/databases/prod-db', {}, config) is False
-        assert should_replicate('secrets-replicator/transformations/', {}, config) is False
-
-    def test_transformation_secret_excluded_even_with_include_tag(self):
-        """Transformation secrets excluded even if they have include tags"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_include_tags=[('Replicate', 'true')]
+        result, transform = should_replicate_secret(
+            'secrets-replicator/transformations/my-sed',
+            self.config,
+            self.mock_client
         )
-        tags = {'Replicate': 'true'}
+        assert result is False
+        assert transform is None
 
-        assert should_replicate('secrets-replicator/transformations/my-sed', tags, config) is False
-
-    def test_transformation_secret_custom_prefix(self):
-        """Custom transformation secret prefix is respected"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            transformation_secret_prefix='my-transforms/'
+    def test_transformation_secret_nested_excluded(self):
+        """Nested transformation secrets are excluded"""
+        result, transform = should_replicate_secret(
+            'secrets-replicator/transformations/databases/prod-db',
+            self.config,
+            self.mock_client
         )
+        assert result is False
+        assert transform is None
 
-        assert should_replicate('my-transforms/sed-file', {}, config) is False
-        assert should_replicate('secrets-replicator/transformations/sed-file', {}, config) is True
-
-    def test_transformation_secret_old_prefix_not_excluded(self):
-        """Old prefix 'transformations/' is NOT excluded with new default"""
-        config = ReplicatorConfig(dest_region='us-west-2')
-
-        # Old prefix should now be treated as normal secret
-        assert should_replicate('transformations/my-sed', {}, config) is True
-
-        # New prefix should be excluded
-        assert should_replicate('secrets-replicator/transformations/my-sed', {}, config) is False
-
-
-class TestShouldReplicateExcludeTags:
-    """Test exclude tag filtering (Layer 2)"""
-
-    def test_exclude_tag_skips_replication(self):
-        """Secret with exclude tag is not replicated"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_exclude_tags=[('SkipReplication', 'true')]
+    def test_filter_secret_excluded(self):
+        """Filter secrets are always excluded"""
+        result, transform = should_replicate_secret(
+            'secrets-replicator/filters/prod',
+            self.config,
+            self.mock_client
         )
-        tags = {'SkipReplication': 'true'}
+        assert result is False
+        assert transform is None
 
-        assert should_replicate('prod-db', tags, config) is False
-
-    def test_exclude_tag_multiple_filters(self):
-        """Multiple exclude tag filters work correctly"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_exclude_tags=[
-                ('SkipReplication', 'true'),
-                ('Environment', 'test')
-            ]
+    def test_config_secret_excluded(self):
+        """Config secrets are always excluded"""
+        result, transform = should_replicate_secret(
+            'secrets-replicator/config/destinations',
+            self.config,
+            self.mock_client
         )
+        assert result is False
+        assert transform is None
 
-        assert should_replicate('prod-db', {'SkipReplication': 'true'}, config) is False
-        assert should_replicate('test-db', {'Environment': 'test'}, config) is False
-        assert should_replicate('prod-db', {'Environment': 'production'}, config) is True
-
-    def test_exclude_tag_takes_precedence_over_include(self):
-        """Exclude tags override include filters"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_list=['prod-db'],
-            source_exclude_tags=[('SkipReplication', 'true')]
+    def test_name_mapping_secret_excluded(self):
+        """Name mapping secrets are always excluded"""
+        result, transform = should_replicate_secret(
+            'secrets-replicator/names/prod-mappings',
+            self.config,
+            self.mock_client
         )
-        tags = {'SkipReplication': 'true'}
-
-        # Even though it's in the include list, exclude tag wins
-        assert should_replicate('prod-db', tags, config) is False
+        assert result is False
+        assert transform is None
 
 
-class TestShouldReplicateIncludePattern:
-    """Test include pattern filtering (Layer 3)"""
+class TestShouldReplicateNoFilter:
+    """Test behavior when SECRETS_FILTER is not configured"""
 
-    def test_pattern_match_simple(self):
-        """Simple regex pattern matching"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'^prod-.*'
+    def setup_method(self):
+        """Clear cache and create config without SECRETS_FILTER"""
+        clear_filter_cache()
+        self.config = ReplicatorConfig(destinations=[], secrets_filter=None)
+        self.mock_client = MagicMock()
+
+    def test_no_filter_allows_all_secrets(self):
+        """Without SECRETS_FILTER, all secrets are allowed"""
+        result, transform = should_replicate_secret(
+            'any-secret',
+            self.config,
+            self.mock_client
         )
+        assert result is True
+        assert transform is None
 
-        assert should_replicate('prod-db', {}, config) is True
-        assert should_replicate('prod-api-key', {}, config) is True
-        assert should_replicate('dev-db', {}, config) is False
-
-    def test_pattern_match_complex(self):
-        """Complex regex pattern matching"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'^(prod|qa)-(db|api|cache)$'
+    def test_no_filter_no_transformation(self):
+        """Without SECRETS_FILTER, no transformation is applied"""
+        result, transform = should_replicate_secret(
+            'prod-db',
+            self.config,
+            self.mock_client
         )
+        assert result is True
+        assert transform is None
 
-        assert should_replicate('prod-db', {}, config) is True
-        assert should_replicate('qa-api', {}, config) is True
-        assert should_replicate('dev-db', {}, config) is False
-        assert should_replicate('prod-unknown', {}, config) is False
+    def test_no_filter_still_excludes_system_secrets(self):
+        """Without SECRETS_FILTER, system secrets are still excluded"""
+        result, transform = should_replicate_secret(
+            'secrets-replicator/transformations/test',
+            self.config,
+            self.mock_client
+        )
+        assert result is False
 
 
-class TestShouldReplicateIncludeList:
-    """Test include list filtering (Layer 3)"""
+class TestShouldReplicateWithFilter:
+    """Test behavior when SECRETS_FILTER is configured"""
 
-    def test_list_match(self):
-        """Explicit list matching"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_list=['shared-redis', 'shared-cache', 'prod-db']
+    def setup_method(self):
+        """Clear cache and create config with SECRETS_FILTER"""
+        clear_filter_cache()
+        self.config = ReplicatorConfig(
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/prod'
+        )
+        self.mock_client = MagicMock()
+
+    def test_filter_match_with_transformation(self):
+        """Filter match returns transformation name"""
+        self.mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "region-swap"}'
         )
 
-        assert should_replicate('shared-redis', {}, config) is True
-        assert should_replicate('prod-db', {}, config) is True
-        assert should_replicate('other-secret', {}, config) is False
-
-    def test_empty_list(self):
-        """Empty list with no other filters replicates all"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_list=[]
+        result, transform = should_replicate_secret(
+            'app/prod/db',
+            self.config,
+            self.mock_client
         )
 
-        assert should_replicate('any-secret', {}, config) is True
+        assert result is True
+        assert transform == 'region-swap'
 
-
-class TestShouldReplicateIncludeTags:
-    """Test include tag filtering (Layer 3)"""
-
-    def test_include_tag_match(self):
-        """Secret with include tag is replicated"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_include_tags=[('Replicate', 'true')]
+    def test_filter_match_without_transformation(self):
+        """Filter match with null transformation replicates without transform"""
+        self.mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"critical-secret": null}'
         )
 
-        assert should_replicate('any-secret', {'Replicate': 'true'}, config) is True
-        assert should_replicate('any-secret', {'Replicate': 'false'}, config) is False
-        assert should_replicate('any-secret', {}, config) is False
-
-    def test_include_tag_multiple_filters(self):
-        """Multiple include tag filters use OR logic"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_include_tags=[
-                ('Replicate', 'true'),
-                ('Environment', 'production')
-            ]
+        result, transform = should_replicate_secret(
+            'critical-secret',
+            self.config,
+            self.mock_client
         )
 
-        # Match first tag
-        assert should_replicate('db1', {'Replicate': 'true'}, config) is True
+        assert result is True
+        assert transform is None
 
-        # Match second tag
-        assert should_replicate('db2', {'Environment': 'production'}, config) is True
-
-        # Match both tags
-        assert should_replicate('db3', {'Replicate': 'true', 'Environment': 'production'}, config) is True
-
-        # Match neither tag
-        assert should_replicate('db4', {'Environment': 'dev'}, config) is False
-
-
-class TestShouldReplicateOrLogic:
-    """Test OR logic across different include filter types"""
-
-    def test_or_logic_pattern_and_list(self):
-        """Pattern OR list matching"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'^prod-.*',
-            source_secret_list=['shared-cache']
+    def test_filter_no_match_denies_replication(self):
+        """No filter match denies replication"""
+        self.mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "region-swap"}'
         )
 
-        # Matches pattern
-        assert should_replicate('prod-db', {}, config) is True
-
-        # In list
-        assert should_replicate('shared-cache', {}, config) is True
-
-        # Matches neither
-        assert should_replicate('dev-db', {}, config) is False
-
-    def test_or_logic_all_filters(self):
-        """Pattern OR list OR tags matching"""
-        config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'^prod-.*',
-            source_secret_list=['shared-cache'],
-            source_include_tags=[('Replicate', 'true')]
+        result, transform = should_replicate_secret(
+            'other-secret',
+            self.config,
+            self.mock_client
         )
 
-        # Matches pattern only
-        assert should_replicate('prod-db', {}, config) is True
+        assert result is False
+        assert transform is None
 
-        # In list only
-        assert should_replicate('shared-cache', {}, config) is True
+    def test_filter_load_failure_denies_replication(self):
+        """Filter loading failure denies replication for safety"""
+        self.mock_client.get_secret.side_effect = Exception("Access denied")
 
-        # Has include tag only
-        assert should_replicate('custom-secret', {'Replicate': 'true'}, config) is True
+        result, transform = should_replicate_secret(
+            'any-secret',
+            self.config,
+            self.mock_client
+        )
 
-        # Matches multiple conditions
-        assert should_replicate('prod-db', {'Replicate': 'true'}, config) is True
+        assert result is False
+        assert transform is None
 
-        # Matches none
-        assert should_replicate('dev-db', {}, config) is False
+    def test_empty_filters_denies_replication(self):
+        """Empty filters (all failed to load) denies replication"""
+        self.mock_client.get_secret.return_value = MagicMock(
+            secret_string='{}'
+        )
 
+        result, transform = should_replicate_secret(
+            'any-secret',
+            self.config,
+            self.mock_client
+        )
 
-class TestShouldReplicateDefaultBehavior:
-    """Test default behavior when no filters are configured"""
-
-    def test_no_filters_replicates_all(self):
-        """No filters means replicate everything (except transformation secrets)"""
-        config = ReplicatorConfig(dest_region='us-west-2')
-
-        assert should_replicate('any-secret', {}, config) is True
-        assert should_replicate('prod-db', {}, config) is True
-        assert should_replicate('dev-api-key', {}, config) is True
-
-        # Except transformation secrets (new prefix)
-        assert should_replicate('secrets-replicator/transformations/my-sed', {}, config) is False
-
-        # Old prefix is treated as normal secret now
-        assert should_replicate('transformations/my-sed', {}, config) is True
+        assert result is False
+        assert transform is None
 
 
 class TestShouldReplicateComplexScenarios:
     """Test complex real-world scenarios"""
 
-    def test_scenario_production_secrets_only(self):
-        """Replicate only production secrets, skip test environments"""
+    def setup_method(self):
+        """Clear cache before each test"""
+        clear_filter_cache()
+
+    def test_production_secrets_only(self):
+        """Replicate only production secrets"""
         config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_include_tags=[('Environment', 'production')],
-            source_exclude_tags=[('SkipReplication', 'true')]
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/prod'
+        )
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "region-swap", "db/prod/*": "connection-transform"}'
         )
 
-        # Production secret without skip tag
-        assert should_replicate('prod-db', {'Environment': 'production'}, config) is True
+        # Production secrets are replicated
+        result, transform = should_replicate_secret('app/prod/api', config, mock_client)
+        assert result is True
+        assert transform == 'region-swap'
 
-        # Production secret with skip tag (skip wins)
-        assert should_replicate('prod-temp', {'Environment': 'production', 'SkipReplication': 'true'}, config) is False
+        # Non-production secrets are denied
+        clear_filter_cache()  # Clear cache to reload filters
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "region-swap", "db/prod/*": "connection-transform"}'
+        )
+        result, transform = should_replicate_secret('app/dev/api', config, mock_client)
+        assert result is False
 
-        # Non-production secret
-        assert should_replicate('dev-db', {'Environment': 'development'}, config) is False
-
-    def test_scenario_mixed_filters(self):
-        """Complex scenario with all filter types"""
+    def test_transformation_chain(self):
+        """Comma-separated transformation names in filter"""
         config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'^app-.*',
-            source_secret_list=['shared-redis', 'shared-postgres'],
-            source_include_tags=[('CriticalService', 'true')],
-            source_exclude_tags=[('Deprecated', 'true'), ('Testing', 'true')]
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/complex'
+        )
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "region-swap,endpoint-update"}'
         )
 
-        # Matches pattern
-        assert should_replicate('app-api-key', {}, config) is True
+        result, transform = should_replicate_secret('app/prod/api', config, mock_client)
 
-        # In shared list
-        assert should_replicate('shared-redis', {}, config) is True
+        assert result is True
+        assert transform == 'region-swap,endpoint-update'
 
-        # Has critical service tag
-        assert should_replicate('payment-processor', {'CriticalService': 'true'}, config) is True
-
-        # Matches pattern but deprecated (exclude wins)
-        assert should_replicate('app-old-service', {'Deprecated': 'true'}, config) is False
-
-        # Matches nothing
-        assert should_replicate('random-secret', {}, config) is False
-
-    def test_scenario_transformation_secret_with_all_includes(self):
-        """Transformation secret excluded even with all include criteria"""
+    def test_multiple_filter_secrets(self):
+        """Multiple filter secrets are merged correctly"""
         config = ReplicatorConfig(
-            dest_region='us-west-2',
-            source_secret_pattern=r'secrets-replicator/transformations/.*',
-            source_secret_list=['secrets-replicator/transformations/my-sed'],
-            source_include_tags=[('Include', 'true')]
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/base,secrets-replicator/filters/override'
         )
+        mock_client = MagicMock()
+        mock_client.get_secret.side_effect = [
+            MagicMock(secret_string='{"app/*": "base-transform"}'),
+            MagicMock(secret_string='{"app/prod/*": "prod-transform"}')
+        ]
 
-        # Even though it matches pattern, list, and tags - still excluded
-        tags = {'Include': 'true'}
-        assert should_replicate('secrets-replicator/transformations/my-sed', tags, config) is False
+        # Both patterns match, but app/* is checked first (dict iteration order)
+        # The merged dict has both patterns, first wildcard match wins
+        result, transform = should_replicate_secret('app/prod/db', config, mock_client)
+        assert result is True
+        # First wildcard match wins (app/* matches before app/prod/*)
+        assert transform == 'base-transform'

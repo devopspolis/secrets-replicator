@@ -245,31 +245,35 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
     Determine if secret should be replicated and which transformation to use.
 
     Filtering logic:
-    1. Hardcoded exclusions (transformation secrets, filter secrets)
-    2. Load and check filters from SECRETS_FILTER
-    3. Find matching pattern
+    1. Hardcoded exclusions (transformation secrets, filter secrets, config secrets)
+    2. If SECRETS_FILTER not configured: allow all secrets, no transformation
+    3. If SECRETS_FILTER configured: load filters and find matching pattern
     4. Return replication decision and transformation name
 
     Args:
         secret_name: Name of the secret to check
-        config: ReplicatorConfig object
+        config: ReplicatorConfig object (must have secrets_filter and secrets_filter_cache_ttl)
         client: Boto3 Secrets Manager client
 
     Returns:
         Tuple of (should_replicate: bool, transformation_name: Optional[str])
 
     Examples:
-        # Match with transformation
+        # Match with transformation (SECRETS_FILTER configured)
         >>> should_replicate_secret("app/prod/db", config, client)
         (True, "region-swap")
 
-        # Match without transformation
+        # Match without transformation (pattern maps to empty/null)
         >>> should_replicate_secret("critical-secret-1", config, client)
         (True, None)
 
-        # No match (deny)
+        # No match in filters (deny replication)
         >>> should_replicate_secret("other-secret", config, client)
         (False, None)
+
+        # No SECRETS_FILTER configured (allow all, no transformation)
+        >>> should_replicate_secret("any-secret", config_without_filter, client)
+        (True, None)
 
         # Hardcoded exclusion
         >>> should_replicate_secret("secrets-replicator/transformations/test", config, client)
@@ -294,11 +298,43 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
         logger.debug(f"Excluded: name mapping secret (prefix: secrets-replicator/names/)")
         return (False, None)
 
-    # LAYER 2: All other secrets are allowed for replication
-    # Filtering is now event-driven via EventBridge rule configuration
-    # No transformation applied by default (transformations loaded per-destination)
-    logger.info(f"Secret '{secret_name}' allowed for replication")
-    return (True, None)
+    # LAYER 2: Check SECRETS_FILTER configuration
+    secrets_filter = getattr(config, 'secrets_filter', None)
+    secrets_filter_cache_ttl = getattr(config, 'secrets_filter_cache_ttl', 300)
+
+    # If SECRETS_FILTER not configured, allow all secrets with no transformation
+    if not secrets_filter:
+        logger.info(f"SECRETS_FILTER not configured - allowing '{secret_name}' without transformation")
+        return (True, None)
+
+    # LAYER 3: Load filters and find matching pattern
+    try:
+        filters = get_cached_filters(secrets_filter, secrets_filter_cache_ttl, client)
+    except Exception as e:
+        logger.error(f"Failed to load filters from SECRETS_FILTER: {e}")
+        # On filter load failure, deny replication for safety
+        return (False, None)
+
+    # If no filters loaded (empty or all failed), deny replication
+    if not filters:
+        logger.warning(f"No filters loaded from SECRETS_FILTER - denying '{secret_name}'")
+        return (False, None)
+
+    # Find matching filter pattern
+    match_result = find_matching_filter(secret_name, filters)
+
+    if match_result is False:
+        # No match found - deny replication
+        logger.info(f"Secret '{secret_name}' does not match any filter pattern - denying replication")
+        return (False, None)
+
+    # Match found - match_result is either a transformation name (str) or None
+    if match_result is None:
+        logger.info(f"Secret '{secret_name}' matched filter - replicating without transformation")
+        return (True, None)
+    else:
+        logger.info(f"Secret '{secret_name}' matched filter - using transformation '{match_result}'")
+        return (True, match_result)
 
 
 def clear_filter_cache():

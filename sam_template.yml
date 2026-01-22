@@ -54,6 +54,10 @@ Resources:
       Environment:
         Variables:
           APP_VERSION: '%%SEMANTIC_VERSION%%'
+          # SECRETS_FILTER: Comma-separated list of filter secret names
+          # Example: 'secrets-replicator/filters/prod,secrets-replicator/filters/db'
+          # If not set, all secrets pass through without transformation
+          # SECRETS_FILTER_CACHE_TTL: Cache TTL in seconds (default: 300)
       DeadLetterQueue:
         Type: SQS
         TargetArn: !GetAtt DeadLetterQueue.Arn
