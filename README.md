@@ -458,6 +458,68 @@ With this configuration:
 - `critical/secret1` → Replicated to `us-west-2` without transformation, NOT replicated to `eu-west-1`
 - `other/secret` → NOT replicated to either destination (no pattern match)
 
+### Filters vs Name Mapping: Understanding the Difference
+
+The `filters` and `secret_names` configurations serve different purposes but both have filtering behavior. Here's how they compare:
+
+| Aspect | `filters` | `secret_names` |
+|--------|-----------|----------------|
+| **Primary purpose** | Specify which **transformation** to apply to secret VALUE | Specify the **destination name** for the secret |
+| **Secondary purpose** | Filter which secrets replicate | Filter which secrets replicate |
+| **Secret location** | `secrets-replicator/filters/{name}` | `secrets-replicator/names/{name}` |
+| **Pattern value meaning** | Transformation name (e.g., `"region-swap"`) | Destination name pattern (e.g., `"app/prod/*"`) |
+| **If pattern matches** | Apply specified transformation | Use specified destination name |
+| **If no pattern matches** | Secret NOT replicated | Secret keeps original name |
+
+**When to use each:**
+
+| Use Case | Configuration |
+|----------|---------------|
+| Transform values only (keep same name) | `filters` only |
+| Rename secrets only (no transformation) | `secret_names` only |
+| Both rename AND transform | Both `filters` and `secret_names` |
+| Simple DR copy (no changes) | Neither (all secrets pass through as-is) |
+
+**How they work together:**
+
+When both are configured for a destination, they are evaluated in this order:
+
+1. **System secrets excluded** → Secrets prefixed with `secrets-replicator/` are always excluded
+2. **Filters checked** → Determines IF secret replicates AND which transformation to apply
+3. **Name mapping applied** → Determines the destination secret name
+
+**Example with both configured:**
+
+```json
+// Destination configuration
+{
+  "region": "us-west-2",
+  "filters": "secrets-replicator/filters/dr",
+  "secret_names": "secrets-replicator/names/us-west-2"
+}
+```
+
+```json
+// Filter secret (secrets-replicator/filters/dr)
+{"app/*": "region-swap", "database/*": null}
+```
+
+```json
+// Name mapping secret (secrets-replicator/names/us-west-2)
+{"app/dev/*": "app/prod/*", "database/*": "db/*"}
+```
+
+**Results:**
+
+| Source Secret | Filters Match? | Name Mapping | Result |
+|---------------|----------------|--------------|--------|
+| `app/dev/config` | Yes → `region-swap` | `app/dev/*` → `app/prod/*` | Replicated as `app/prod/config` with `region-swap` transformation |
+| `database/users` | Yes → no transform | `database/*` → `db/*` | Replicated as `db/users` without transformation |
+| `app/prod/api` | Yes → `region-swap` | No match | Replicated as `app/prod/api` (original name) with `region-swap` transformation |
+| `other/secret` | No match | N/A | NOT replicated (filtered out by `filters`) |
+
+**Important:** If `filters` is configured, a secret MUST match a filter pattern to be replicated. The `secret_names` mapping only affects the destination name for secrets that already passed the filter check.
+
 ### Default Configuration Values
 
 The Lambda function uses these hardcoded defaults (no environment variables required):
@@ -499,18 +561,21 @@ aws lambda update-function-configuration \
 
 ## Secret Filtering and Name Mapping
 
+This section covers the `secret_names` configuration for controlling destination secret names. For information on how `filters` and `secret_names` work together, see [Filters vs Name Mapping](#filters-vs-name-mapping-understanding-the-difference) above.
+
 **IMPORTANT**: The `secret_names` configuration serves a **dual purpose** - it acts as BOTH a filter (which secrets to replicate) AND a name mapper (what names to use).
 
 ### How secret_names Works
 
 When you configure `secret_names` for a destination:
 
-1. **Filtering**: Only secrets matching a pattern in the mapping will be replicated to that destination
-2. **Name Mapping**: Matched secrets will be replicated with the transformed name from the mapping
+1. **Name Mapping**: Matched secrets will be replicated with the transformed name from the mapping
+2. **Filtering** (when `filters` is NOT configured): Only secrets matching a pattern are replicated
 
 **Key Behavior**:
-- **If `secret_names` is configured**: Only secrets matching a pattern are replicated
-- **If `secret_names` is NOT configured**: All secrets are replicated with the same name (standard DR pattern)
+- **If `filters` is configured**: `filters` determines which secrets replicate; `secret_names` only affects the destination name
+- **If only `secret_names` is configured**: It acts as both filter AND name mapper
+- **If neither is configured**: All secrets are replicated with the same name (standard DR pattern)
 
 ### Example: Filter and Map Secrets
 
