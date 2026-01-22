@@ -1469,7 +1469,38 @@ Transformation rules (sed scripts or JSON mappings) are stored in **transformati
 **Setup Process**:
 1. Create transformation secret with prefix `secrets-replicator/transformations/`
 2. Store sed script or JSON mapping in secret value
-3. Configure transformations per-destination in the configuration secret or via destination-specific settings
+3. Create a filter secret that maps secret patterns to transformation names
+4. Configure the destination to use the filter secret
+
+**Complete Example - Linking Transformation to Destination**:
+
+```bash
+# Step 1: Create transformation secret (the actual sed/JSON rules)
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --secret-string 's/us-east-1/us-west-2/g' \
+  --region us-east-1
+
+# Step 2: Create filter secret (maps patterns to transformation names)
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/production \
+  --secret-string '{"app/*": "region-swap", "database/*": "region-swap"}' \
+  --region us-east-1
+
+# Step 3: Configure destination to use the filter
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --secret-string '[{
+    "region": "us-west-2",
+    "filters": "secrets-replicator/filters/production"
+  }]' \
+  --region us-east-1
+```
+
+**How it connects**:
+- Destination references filter: `"filters": "secrets-replicator/filters/production"`
+- Filter maps patterns to transformations: `{"app/*": "region-swap"}`
+- Transformation name `region-swap` resolves to: `secrets-replicator/transformations/region-swap`
 
 ### Sed Transformations
 
@@ -1493,27 +1524,51 @@ s/old/new/gi
 
 #### Examples
 
-**Environment Change**:
+**Environment Change** (dev to prod):
 ```bash
-# Create transformation secret
+# 1. Create transformation secret
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/env-to-prod \
-  --secret-string 's/dev/prod/g'
+  --secret-string 's/dev/prod/g' \
+  --region us-east-1
+
+# 2. Create filter referencing this transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/promote \
+  --secret-string '{"config/*": "env-to-prod"}' \
+  --region us-east-1
+
+# 3. Configure destination with filter
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{"region": "us-east-1", "filters": "secrets-replicator/filters/promote"}]' \
+  --region us-east-1
 ```
 
-**Note**: Configure transformations per-destination. See Configuration section for details.
-
-**Region Swap**:
+**Region Swap** (us-east-1 to us-west-2):
 ```bash
-# Create transformation secret
+# 1. Create transformation secret
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/region-swap \
-  --secret-string 's/us-east-1/us-west-2/g'
+  --secret-string 's/us-east-1/us-west-2/g' \
+  --region us-east-1
+
+# 2. Create filter referencing this transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/dr \
+  --secret-string '{"app/*": "region-swap", "database/*": "region-swap"}' \
+  --region us-east-1
+
+# 3. Configure destination with filter
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{"region": "us-west-2", "filters": "secrets-replicator/filters/dr"}]' \
+  --region us-east-1
 ```
 
 **Complex Multi-Line Transformations**:
 ```bash
-# Create transformation secret with multi-line sed script
+# 1. Create transformation secret with multi-line sed script
 aws secretsmanager create-secret \
   --name secrets-replicator/transformations/comprehensive-transform \
   --secret-string '# Change environment
@@ -1528,7 +1583,20 @@ s/dev-api\.example\.com/prod-api.example.com/g
 s/:3000/:8080/g
 
 # Case-insensitive domain swap
-s/example\.local/example.com/gi'
+s/example\.local/example.com/gi' \
+  --region us-east-1
+
+# 2. Create filter referencing this transformation
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/comprehensive \
+  --secret-string '{"myapp/*": "comprehensive-transform"}' \
+  --region us-east-1
+
+# 3. Configure destination with filter
+aws secretsmanager put-secret-value \
+  --secret-id secrets-replicator/config/destinations \
+  --secret-string '[{"region": "us-west-2", "filters": "secrets-replicator/filters/comprehensive"}]' \
+  --region us-east-1
 ```
 
 ### JSON Transformations
