@@ -32,6 +32,7 @@ class DestinationConfig:
     secret_names_cache_ttl: int = 300            # Cache TTL for name mappings (seconds)
     kms_key_id: Optional[str] = None             # KMS key ID for encryption (optional)
     variables: Optional[Dict[str, str]] = None   # Custom variables for transformation expansion
+    filters: Optional[str] = None                # Filter secret name (maps patterns to transformations)
 
     def __post_init__(self):
         """Validate destination configuration"""
@@ -360,7 +361,8 @@ def load_destinations(config: ReplicatorConfig, secrets_manager_client) -> None:
                 secret_names_cache_ttl=dest_data.get('secret_names_cache_ttl') or
                                       dest_data.get('secretNamesCacheTTL') or 300,
                 kms_key_id=dest_data.get('kms_key_id') or dest_data.get('kmsKeyId'),
-                variables=variables
+                variables=variables,
+                filters=dest_data.get('filters')
             )
             destinations.append(dest)
         except (TypeError, ConfigurationError) as e:

@@ -12,9 +12,11 @@ from src.filters import (
     get_cached_filters,
     match_secret_pattern,
     find_matching_filter,
-    clear_filter_cache
+    clear_filter_cache,
+    is_system_secret,
+    get_destination_transformation
 )
-from src.config import parse_tag_filters, ReplicatorConfig, ConfigurationError
+from src.config import parse_tag_filters, ReplicatorConfig, ConfigurationError, DestinationConfig
 
 
 class TestParseTagFilters:
@@ -502,3 +504,159 @@ class TestShouldReplicateComplexScenarios:
         assert result is True
         # First wildcard match wins (app/* matches before app/prod/*)
         assert transform == 'base-transform'
+
+
+class TestIsSystemSecret:
+    """Test is_system_secret function for hardcoded exclusions"""
+
+    def test_transformation_secret(self):
+        """Transformation secrets are system secrets"""
+        assert is_system_secret('secrets-replicator/transformations/my-sed') is True
+        assert is_system_secret('secrets-replicator/transformations/nested/path') is True
+
+    def test_filter_secret(self):
+        """Filter secrets are system secrets"""
+        assert is_system_secret('secrets-replicator/filters/prod') is True
+
+    def test_config_secret(self):
+        """Config secrets are system secrets"""
+        assert is_system_secret('secrets-replicator/config/destinations') is True
+
+    def test_names_secret(self):
+        """Name mapping secrets are system secrets"""
+        assert is_system_secret('secrets-replicator/names/prod-mappings') is True
+
+    def test_normal_secret(self):
+        """Normal secrets are not system secrets"""
+        assert is_system_secret('app/prod/database') is False
+        assert is_system_secret('my-secret') is False
+        assert is_system_secret('transformations/old-style') is False
+
+
+class TestGetDestinationTransformation:
+    """Test per-destination filtering with get_destination_transformation"""
+
+    def setup_method(self):
+        """Clear cache before each test"""
+        clear_filter_cache()
+
+    def test_destination_with_filters(self):
+        """Destination-level filters override global config"""
+        destination = DestinationConfig(
+            region='us-west-2',
+            filters='secrets-replicator/filters/us-west-2'
+        )
+        global_config = ReplicatorConfig(
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/global'
+        )
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/*": "west-transform"}'
+        )
+
+        result, transform = get_destination_transformation(
+            'app/prod/db', destination, global_config, mock_client
+        )
+
+        assert result is True
+        assert transform == 'west-transform'
+        # Should load destination filter, not global
+        mock_client.get_secret.assert_called_with(
+            secret_id='secrets-replicator/filters/us-west-2'
+        )
+
+    def test_destination_without_filters_uses_global(self):
+        """Destination without filters uses global SECRETS_FILTER"""
+        destination = DestinationConfig(region='us-west-2')  # No filters
+        global_config = ReplicatorConfig(
+            destinations=[],
+            secrets_filter='secrets-replicator/filters/global'
+        )
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/*": "global-transform"}'
+        )
+
+        result, transform = get_destination_transformation(
+            'app/prod/db', destination, global_config, mock_client
+        )
+
+        assert result is True
+        assert transform == 'global-transform'
+        # Should load global filter
+        mock_client.get_secret.assert_called_with(
+            secret_id='secrets-replicator/filters/global'
+        )
+
+    def test_no_filters_anywhere(self):
+        """No filters configured - allow all, no transformation"""
+        destination = DestinationConfig(region='us-west-2')
+        global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
+        mock_client = MagicMock()
+
+        result, transform = get_destination_transformation(
+            'any-secret', destination, global_config, mock_client
+        )
+
+        assert result is True
+        assert transform is None
+        # Should not call get_secret
+        mock_client.get_secret.assert_not_called()
+
+    def test_secret_not_matching_destination_filter(self):
+        """Secret not matching destination filter is denied"""
+        destination = DestinationConfig(
+            region='us-west-2',
+            filters='secrets-replicator/filters/us-west-2'
+        )
+        global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
+        mock_client = MagicMock()
+        mock_client.get_secret.return_value = MagicMock(
+            secret_string='{"app/prod/*": "transform"}'
+        )
+
+        result, transform = get_destination_transformation(
+            'other-secret', destination, global_config, mock_client
+        )
+
+        assert result is False
+        assert transform is None
+
+    def test_different_destinations_different_transforms(self):
+        """Different destinations can have different transformations"""
+        clear_filter_cache()
+
+        dest_west = DestinationConfig(
+            region='us-west-2',
+            filters='secrets-replicator/filters/us-west-2'
+        )
+        dest_east = DestinationConfig(
+            region='us-east-1',
+            filters='secrets-replicator/filters/us-east-1'
+        )
+        global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
+
+        mock_client = MagicMock()
+        mock_client.get_secret.side_effect = [
+            MagicMock(secret_string='{"app/*": "west-transform"}'),
+            MagicMock(secret_string='{"app/*": "east-transform"}')
+        ]
+
+        # Check west destination
+        result_west, transform_west = get_destination_transformation(
+            'app/db', dest_west, global_config, mock_client
+        )
+
+        # Clear cache to force reload for different destination
+        clear_filter_cache()
+
+        # Check east destination
+        result_east, transform_east = get_destination_transformation(
+            'app/db', dest_east, global_config, mock_client
+        )
+
+        assert result_west is True
+        assert transform_west == 'west-transform'
+        assert result_east is True
+        assert transform_east == 'east-transform'

@@ -337,6 +337,114 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
         return (True, match_result)
 
 
+def is_system_secret(secret_name: str) -> bool:
+    """
+    Check if a secret is a system secret that should never be replicated.
+
+    System secrets include transformation secrets, filter secrets, config secrets,
+    and name mapping secrets.
+
+    Args:
+        secret_name: Name of the secret to check
+
+    Returns:
+        True if this is a system secret that should be excluded, False otherwise
+
+    Examples:
+        >>> is_system_secret("secrets-replicator/transformations/my-sed")
+        True
+        >>> is_system_secret("app/prod/database")
+        False
+    """
+    system_prefixes = [
+        TRANSFORMATION_SECRET_PREFIX,
+        FILTER_SECRET_PREFIX,
+        'secrets-replicator/config/',
+        'secrets-replicator/names/'
+    ]
+
+    for prefix in system_prefixes:
+        if secret_name.startswith(prefix):
+            logger.debug(f"Secret '{secret_name}' is a system secret (prefix: {prefix})")
+            return True
+
+    return False
+
+
+def get_destination_transformation(
+    secret_name: str,
+    destination,
+    global_config,
+    client
+) -> Tuple[bool, Optional[str]]:
+    """
+    Get the transformation to apply for a specific destination.
+
+    Uses destination-level filters if configured, otherwise falls back to
+    global SECRETS_FILTER. This allows different destinations to have
+    different filter/transformation rules.
+
+    Args:
+        secret_name: Name of the secret being replicated
+        destination: DestinationConfig object (may have 'filters' field)
+        global_config: ReplicatorConfig object (has 'secrets_filter' field)
+        client: Boto3 Secrets Manager client
+
+    Returns:
+        Tuple of (should_replicate_to_destination: bool, transformation_name: Optional[str])
+
+    Examples:
+        # Destination with filters configured
+        >>> get_destination_transformation("app/prod/db", dest_with_filters, config, client)
+        (True, "region-swap-west")
+
+        # Destination without filters (uses global)
+        >>> get_destination_transformation("app/prod/db", dest_no_filters, config, client)
+        (True, "global-transform")
+
+        # Secret doesn't match destination filter
+        >>> get_destination_transformation("other/secret", dest_with_filters, config, client)
+        (False, None)
+    """
+    # Get destination-specific filter or fall back to global
+    dest_filters = getattr(destination, 'filters', None)
+    global_filters = getattr(global_config, 'secrets_filter', None)
+    cache_ttl = getattr(global_config, 'secrets_filter_cache_ttl', 300)
+
+    # Determine which filter to use
+    filter_secret = dest_filters or global_filters
+
+    if not filter_secret:
+        # No filters configured at all - allow secret, no transformation
+        logger.info(f"No filters configured for destination {destination.region} - allowing '{secret_name}'")
+        return (True, None)
+
+    # Load and check the filter
+    try:
+        filters = get_cached_filters(filter_secret, cache_ttl, client)
+    except Exception as e:
+        logger.error(f"Failed to load filters for destination {destination.region}: {e}")
+        return (False, None)
+
+    if not filters:
+        logger.warning(f"No filters loaded for destination {destination.region} - denying '{secret_name}'")
+        return (False, None)
+
+    # Find matching filter pattern
+    match_result = find_matching_filter(secret_name, filters)
+
+    if match_result is False:
+        logger.info(f"Secret '{secret_name}' doesn't match filters for {destination.region}")
+        return (False, None)
+
+    if match_result is None:
+        logger.info(f"Secret '{secret_name}' matches filter for {destination.region} - no transformation")
+        return (True, None)
+
+    logger.info(f"Secret '{secret_name}' matches filter for {destination.region} - transform: '{match_result}'")
+    return (True, match_result)
+
+
 def clear_filter_cache():
     """
     Clear the filter cache.
