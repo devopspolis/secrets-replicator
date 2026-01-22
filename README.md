@@ -366,6 +366,8 @@ Each destination in the JSON array supports these attributes:
 | `secret_names` | No | `DEFAULT_SECRET_NAMES` env var, or (none) | Name mapping secret (e.g., `secrets-replicator/names/us-west-2`) |
 | `secret_names_cache_ttl` | No | `SECRET_NAMES_CACHE_TTL` env var, or `300` | Cache TTL for name mappings (seconds) |
 | `kms_key_id` | No | `KMS_KEY_ID` env var, or (none) | KMS key ID/ARN for destination encryption |
+| `filters` | No | `SECRETS_FILTER` env var, or (none) | Filter secret for filtering AND transformation mapping - determines which secrets replicate and which transformation to apply (e.g., `secrets-replicator/filters/dr`) |
+| `variables` | No | (none) | Custom variables for transformation expansion (JSON object) |
 
 **Default Resolution Order**:
 1. **Per-destination value** (specified in configuration secret) - highest priority
@@ -378,15 +380,83 @@ Each destination in the JSON array supports these attributes:
   {
     "region": "us-west-2",
     "secret_names": "secrets-replicator/names/us-west-2",
+    "filters": "secrets-replicator/filters/us-west-2",
     "kms_key_id": "arn:aws:kms:us-west-2:111111111111:key/..."
   },
   {
     "region": "eu-west-1",
     "account_role_arn": "arn:aws:iam::999999999999:role/SecretsReplicatorDestRole",
-    "secret_names": "secrets-replicator/names/eu-west-1"
+    "secret_names": "secrets-replicator/names/eu-west-1",
+    "filters": "secrets-replicator/filters/eu-west-1"
   }
 ]
 ```
+
+### Filter Configuration
+
+Filters serve a **dual purpose**:
+1. **Filtering**: Determine which secrets are replicated (only secrets matching a pattern are replicated)
+2. **Transformation Mapping**: Specify which transformation to apply to matching secrets
+
+Each destination can have its own filter configuration, allowing different filtering and transformation rules for different regions.
+
+**Filter Secret Format**:
+
+A filter secret is a JSON object mapping secret name patterns to transformation names:
+
+```json
+{
+  "app/*": "region-swap",
+  "database/prod/*": "db-transform",
+  "critical-secret-1": null,
+  "other-secrets/*": ""
+}
+```
+
+**Pattern Matching Rules**:
+- **Exact match**: `"mysecret"` matches only `"mysecret"`
+- **Prefix wildcard**: `"app/*"` matches `"app/prod"`, `"app/staging/db"`, etc.
+- **Suffix wildcard**: `"*/prod"` matches `"app/prod"`, `"db/prod"`, etc.
+- **Middle wildcard**: `"app/*/db"` matches `"app/prod/db"`, `"app/staging/db"`, etc.
+- Exact matches have highest priority, then wildcard patterns are checked in order
+
+**Transformation Values** (the value in the pattern → value mapping):
+- **String value** (e.g., `"region-swap"`): Replicate AND apply the named transformation from `secrets-replicator/transformations/{name}`
+- **`null` or `""`**: Replicate without transformation (pass-through copy)
+- **No match**: Secret is NOT replicated to that destination (filtered out)
+
+**Example: Per-Destination Filters**
+
+Different destinations can have different filtering/transformation rules:
+
+```bash
+# Filter for us-west-2: All app/* secrets get region swap
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/us-west-2 \
+  --secret-string '{"app/*": "region-swap-west", "critical/*": null}' \
+  --region us-east-1
+
+# Filter for eu-west-1: Only database secrets
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/eu-west-1 \
+  --secret-string '{"database/*": "region-swap-eu"}' \
+  --region us-east-1
+
+# Destinations configuration
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --secret-string '[
+    {"region": "us-west-2", "filters": "secrets-replicator/filters/us-west-2"},
+    {"region": "eu-west-1", "filters": "secrets-replicator/filters/eu-west-1"}
+  ]' \
+  --region us-east-1
+```
+
+With this configuration:
+- `app/myapp` → Replicated to `us-west-2` with `region-swap-west` transformation, NOT replicated to `eu-west-1`
+- `database/prod` → Replicated to `eu-west-1` with `region-swap-eu` transformation, NOT replicated to `us-west-2`
+- `critical/secret1` → Replicated to `us-west-2` without transformation, NOT replicated to `eu-west-1`
+- `other/secret` → NOT replicated to either destination (no pattern match)
 
 ### Default Configuration Values
 
@@ -910,6 +980,87 @@ aws secretsmanager create-secret \
 ```
 
 **Result**: Automatic failover to `us-west-2` with correct database endpoint.
+
+#### Complete Example: Replicate `app/*` Secrets with Region Transformation
+
+This example shows how to replicate all secrets matching `app/*` from `us-east-1` to `us-west-2`, replacing all occurrences of `us-east-1` with `us-west-2` in the secret values.
+
+**Step 1: Create the transformation secret**
+
+This defines the sed transformation rule:
+
+```bash
+aws secretsmanager create-secret \
+  --name secrets-replicator/transformations/region-swap \
+  --description "Replace us-east-1 with us-west-2" \
+  --secret-string 's/us-east-1/us-west-2/g' \
+  --region us-east-1
+```
+
+**Step 2: Create the filter secret**
+
+This maps secret patterns to transformation names. Secrets matching `app/*` will use the `region-swap` transformation:
+
+```bash
+aws secretsmanager create-secret \
+  --name secrets-replicator/filters/dr \
+  --description "DR filter - replicate app secrets with region swap" \
+  --secret-string '{"app/*": "region-swap"}' \
+  --region us-east-1
+```
+
+**Step 3: Create the destinations secret with filters**
+
+This configures the destination region and links to the filter secret:
+
+```bash
+aws secretsmanager create-secret \
+  --name secrets-replicator/config/destinations \
+  --description "Replication destinations" \
+  --secret-string '[{
+    "region": "us-west-2",
+    "filters": "secrets-replicator/filters/dr"
+  }]' \
+  --region us-east-1
+```
+
+**Step 4: Test by creating/updating a source secret**
+
+```bash
+aws secretsmanager create-secret \
+  --name app/database \
+  --description "Application database config" \
+  --secret-string '{"host":"db.us-east-1.rds.amazonaws.com","port":"5432"}' \
+  --region us-east-1
+```
+
+**Step 5: Verify replication (after ~2-5 seconds)**
+
+```bash
+aws secretsmanager get-secret-value \
+  --secret-id app/database \
+  --region us-west-2 \
+  --query SecretString \
+  --output text
+```
+
+**Expected output**:
+```json
+{"host":"db.us-west-2.rds.amazonaws.com","port":"5432"}
+```
+
+**How It Works**:
+1. When `app/database` is created/updated in `us-east-1`, EventBridge triggers the Lambda
+2. Lambda loads the filter from `secrets-replicator/filters/dr`
+3. The filter matches `app/database` against pattern `app/*` and finds transformation `region-swap`
+4. Lambda loads the transformation from `secrets-replicator/transformations/region-swap`
+5. The sed rule `s/us-east-1/us-west-2/g` is applied to the secret value
+6. The transformed secret is written to `us-west-2`
+
+**Filtering Behavior**:
+- Secrets matching `app/*` are replicated with the `region-swap` transformation
+- Secrets NOT matching any pattern in the filter are NOT replicated
+- System secrets (prefixed with `secrets-replicator/`) are automatically excluded
 
 ---
 

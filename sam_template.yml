@@ -54,8 +54,11 @@ Resources:
       Environment:
         Variables:
           APP_VERSION: '%%SEMANTIC_VERSION%%'
-          # SECRETS_FILTER: Comma-separated list of filter secret names
+          # SECRETS_FILTER: Comma-separated list of filter secret names (dual purpose)
+          #   - Filtering: Only secrets matching patterns in filter are replicated
+          #   - Transformation mapping: Specifies which transformation to apply
           # Example: 'secrets-replicator/filters/prod,secrets-replicator/filters/db'
+          # Filter secret format: {"pattern": "transformation-name", "app/*": "region-swap"}
           # If not set, all secrets pass through without transformation
           # SECRETS_FILTER_CACHE_TTL: Cache TTL in seconds (default: 300)
       DeadLetterQueue:

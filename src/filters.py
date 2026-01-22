@@ -1,6 +1,10 @@
 """
 Filter configuration management for secrets replicator.
 
+Filters serve a dual purpose:
+1. Filtering: Determine which secrets are replicated (only matching patterns)
+2. Transformation Mapping: Specify which transformation to apply to each secret
+
 Handles loading, caching, and pattern matching for SECRETS_FILTER configuration.
 """
 
@@ -31,19 +35,26 @@ def load_filter_configuration(filter_list: str, client) -> Dict[str, Optional[st
     """
     Load filter configuration from comma-separated list of secret names.
 
+    Filter secrets serve a dual purpose:
+    - Filtering: Only secrets matching a pattern key are replicated
+    - Transformation mapping: The value specifies which transformation to apply
+
     Args:
         filter_list: Comma-separated list of Secrets Manager secret names
         client: Boto3 Secrets Manager client
 
     Returns:
-        Dict mapping secret patterns to transformation names
+        Dict mapping secret patterns to transformation names (dual purpose):
+        - Keys are patterns for filtering (which secrets to replicate)
+        - Values are transformation names (which transformation to apply)
 
     Example:
         Input: "secrets-replicator/filters/prod,secrets-replicator/filters/db"
         Output: {
-            "app/prod/*": "region-swap",
-            "db/prod/*": "connection-string-transform",
-            "critical-secret-1": None  # No transformation
+            "app/prod/*": "region-swap",      # Replicate app/prod/* with region-swap
+            "db/prod/*": "db-transform",      # Replicate db/prod/* with db-transform
+            "critical-secret-1": None         # Replicate as-is (no transformation)
+            # Secrets not matching any pattern are NOT replicated
         }
 
     Raises:
@@ -200,14 +211,18 @@ def find_matching_filter(secret_name: str, filters: Dict[str, Optional[str]]) ->
     """
     Find transformation for a secret based on filter patterns.
 
+    This function implements the dual-purpose filter behavior:
+    - Filtering: Returns False if no pattern matches (secret not replicated)
+    - Transformation mapping: Returns the transformation name if pattern matches
+
     Args:
         secret_name: Name of the secret to replicate
-        filters: Dict of pattern -> transformation_name mappings
+        filters: Dict of pattern -> transformation_name mappings (dual purpose)
 
     Returns:
-        - Transformation name (str) if match found with transformation
-        - None if match found without transformation (replicate as-is)
-        - False if no match found (do not replicate)
+        - Transformation name (str): Pattern matched, replicate with this transformation
+        - None: Pattern matched, replicate without transformation (pass-through)
+        - False: No pattern matched, do NOT replicate (filtered out)
 
     Pattern matching:
         - Exact match has highest priority
@@ -217,11 +232,11 @@ def find_matching_filter(secret_name: str, filters: Dict[str, Optional[str]]) ->
     Examples:
         >>> filters = {"app/prod/*": "region-swap", "critical-secret-1": None}
         >>> find_matching_filter("app/prod/db", filters)
-        'region-swap'
+        'region-swap'  # Replicate with region-swap transformation
         >>> find_matching_filter("critical-secret-1", filters)
-        None
+        None  # Replicate without transformation (pass-through)
         >>> find_matching_filter("other-secret", filters)
-        False
+        False  # Do NOT replicate (no matching pattern)
     """
     # Check exact match first (highest priority)
     if secret_name in filters:
@@ -378,7 +393,11 @@ def get_destination_transformation(
     client
 ) -> Tuple[bool, Optional[str]]:
     """
-    Get the transformation to apply for a specific destination.
+    Determine if secret should replicate to destination and which transformation to use.
+
+    This function implements the dual-purpose filter behavior per-destination:
+    - Filtering: Should this secret be replicated to this destination?
+    - Transformation mapping: Which transformation should be applied?
 
     Uses destination-level filters if configured, otherwise falls back to
     global SECRETS_FILTER. This allows different destinations to have
@@ -391,20 +410,23 @@ def get_destination_transformation(
         client: Boto3 Secrets Manager client
 
     Returns:
-        Tuple of (should_replicate_to_destination: bool, transformation_name: Optional[str])
+        Tuple of (should_replicate: bool, transformation_name: Optional[str]):
+        - (True, "name"): Replicate with named transformation
+        - (True, None): Replicate without transformation (pass-through)
+        - (False, None): Do NOT replicate to this destination
 
     Examples:
-        # Destination with filters configured
+        # Secret matches filter with transformation
         >>> get_destination_transformation("app/prod/db", dest_with_filters, config, client)
-        (True, "region-swap-west")
+        (True, "region-swap-west")  # Replicate with transformation
 
-        # Destination without filters (uses global)
-        >>> get_destination_transformation("app/prod/db", dest_no_filters, config, client)
-        (True, "global-transform")
+        # Secret matches filter without transformation
+        >>> get_destination_transformation("critical/secret", dest_with_filters, config, client)
+        (True, None)  # Replicate as-is
 
-        # Secret doesn't match destination filter
+        # Secret doesn't match any filter pattern
         >>> get_destination_transformation("other/secret", dest_with_filters, config, client)
-        (False, None)
+        (False, None)  # Do NOT replicate
     """
     # Get destination-specific filter or fall back to global
     dest_filters = getattr(destination, 'filters', None)
