@@ -70,108 +70,27 @@ Resources:
       Policies:
         - Version: '2012-10-17'
           Statement:
-            # Read source secrets (filtering is done in Lambda code via SECRETS_FILTER)
-            - Sid: ReadSourceSecrets
+            # Read all secrets (source, config, transformations, filters, names)
+            - Sid: ReadSecrets
               Effect: Allow
               Action:
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
               Resource: '*'
 
-            # Read destinations config secret (for loading destination configurations)
-            - Sid: ReadDestinationsConfig
-              Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/config/*'
-
-            # DENY write to config secrets (defense-in-depth security layer)
-            - Sid: DenyWriteConfigSecrets
-              Effect: Deny
-              Action:
-                - secretsmanager:CreateSecret
-                - secretsmanager:PutSecretValue
-                - secretsmanager:UpdateSecret
-                - secretsmanager:DeleteSecret
-              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/config/*'
-
-            # Read transformation secrets (for loading transformation rules)
-            - Sid: ReadTransformationSecrets
-              Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-                - secretsmanager:DescribeSecret
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/transformations/*'
-
-            # DENY write to transformation secrets (defense-in-depth security layer)
-            - Sid: DenyWriteTransformationSecrets
-              Effect: Deny
-              Action:
-                - secretsmanager:CreateSecret
-                - secretsmanager:PutSecretValue
-                - secretsmanager:UpdateSecret
-                - secretsmanager:DeleteSecret
-              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/transformations/*'
-
-            # Read filter secrets (for loading filter configuration)
-            - Sid: ReadFilterSecrets
-              Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/filters/*'
-
-            # DENY write to filter secrets (defense-in-depth security layer)
-            - Sid: DenyWriteFilterSecrets
-              Effect: Deny
-              Action:
-                - secretsmanager:CreateSecret
-                - secretsmanager:PutSecretValue
-                - secretsmanager:UpdateSecret
-                - secretsmanager:DeleteSecret
-              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/filters/*'
-
-            # Read name mapping secrets (for loading name mapping configuration)
-            - Sid: ReadNameMappingSecrets
-              Effect: Allow
-              Action:
-                - secretsmanager:GetSecretValue
-              Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:secrets-replicator/names/*'
-
-            # DENY write to name mapping secrets (defense-in-depth security layer)
-            - Sid: DenyWriteNameMappingSecrets
-              Effect: Deny
-              Action:
-                - secretsmanager:CreateSecret
-                - secretsmanager:PutSecretValue
-                - secretsmanager:UpdateSecret
-                - secretsmanager:DeleteSecret
-              Resource: 'arn:aws:secretsmanager:*:*:secret:secrets-replicator/names/*'
-
-            # Write destination secrets (same account)
-            - Sid: WriteDestinationSecrets
+            # Write destination secrets (create new or update existing)
+            - Sid: WriteSecrets
               Effect: Allow
               Action:
                 - secretsmanager:CreateSecret
                 - secretsmanager:PutSecretValue
-                - secretsmanager:DescribeSecret
-                - secretsmanager:TagResource
               Resource: '*'
 
-            # KMS permissions for decrypting source secrets
-            - Sid: KMSDecryptSource
+            # KMS permissions for encrypting/decrypting secrets (any region)
+            - Sid: KMSOperations
               Effect: Allow
               Action:
                 - kms:Decrypt
-                - kms:DescribeKey
-              Resource: '*'
-              Condition:
-                StringEquals:
-                  'kms:ViaService': !Sub 'secretsmanager.${AWS::Region}.amazonaws.com'
-
-            # KMS permissions for encrypting destination secrets (any region)
-            - Sid: KMSEncryptDestination
-              Effect: Allow
-              Action:
                 - kms:Encrypt
                 - kms:GenerateDataKey
                 - kms:DescribeKey
@@ -180,8 +99,8 @@ Resources:
                 StringLike:
                   'kms:ViaService': 'secretsmanager.*.amazonaws.com'
 
-            # Assume role for cross-account (if configured)
-            - Sid: AssumeDestinationRole
+            # Assume role for cross-account replication
+            - Sid: AssumeRole
               Effect: Allow
               Action:
                 - sts:AssumeRole
@@ -197,7 +116,7 @@ Resources:
                 StringEquals:
                   'cloudwatch:namespace': 'SecretsReplicator'
 
-            # Send to Dead Letter Queue
+            # Send failed events to Dead Letter Queue
             - Sid: SendToDLQ
               Effect: Allow
               Action:
