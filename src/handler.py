@@ -637,7 +637,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'sourceSecretId': secret_event.secret_id,
                 'sourceRegion': secret_event.region,
                 'transformMode': transform_mode_response,
-                'rulesCount': total_rules_count,
                 'transformChainLength': len(transformation_chain),
                 'totalDurationMs': round(total_duration_ms, 2),
                 'destinations': destination_results
@@ -655,7 +654,6 @@ def lambda_handler(event: Dict[str, Any], context: Any) -> Dict[str, Any]:
                 'sourceSecretId': secret_event.secret_id,
                 'sourceRegion': secret_event.region,
                 'transformMode': transform_mode_response,
-                'rulesCount': total_rules_count,
                 'transformChainLength': len(transformation_chain),
                 'totalDurationMs': round(total_duration_ms, 2),
                 'destinations': destination_results
