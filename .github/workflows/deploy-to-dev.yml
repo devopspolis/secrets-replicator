@@ -58,8 +58,8 @@ jobs:
         run: |
           echo "### Generating template.yaml..." >> $GITHUB_STEP_SUMMARY
 
-          # Use dev version format: {build_number}
-          VERSION="${{ github.run_number }}"
+          # Use dev version format: 0.0.dev{build_number}
+          VERSION="0.0.dev${{ github.run_number }}"
           SEMANTIC_VERSION="${VERSION}"
 
           sed \
@@ -70,6 +70,9 @@ jobs:
           echo "✅ Template created with version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
 
       - name: Build application
+        env:
+          # Set version for setuptools-scm (used by Python package)
+          SETUPTOOLS_SCM_PRETEND_VERSION: "0.0.dev${{ github.run_number }}"
         run: sam build
 
       - name: Deploy to Dev

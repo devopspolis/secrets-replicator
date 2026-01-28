@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "secrets-replicator"
-version = "1.0.0"
+dynamic = ["version"]
 description = "AWS Lambda function for replicating and transforming secrets across regions and accounts"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -179,3 +179,10 @@ skips = [
 
 [tool.bandit.assert_used]
 skips = ["*/test_*.py", "tests/*"]
+
+[tool.setuptools_scm]
+# Version is derived from git tags (e.g., v1.0.0 -> 1.0.0)
+# For dev builds, set SETUPTOOLS_SCM_PRETEND_VERSION env var
+# Example: SETUPTOOLS_SCM_PRETEND_VERSION=0.0.dev123
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
