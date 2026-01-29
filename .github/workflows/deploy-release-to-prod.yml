@@ -123,6 +123,8 @@ jobs:
           echo "✅ Template created with version: ${VERSION}" >> $GITHUB_STEP_SUMMARY
 
       - name: Build application
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION: "${{ needs.setup.outputs.version }}"
         run: |
           echo "### Building Application..." >> $GITHUB_STEP_SUMMARY
           sam build
