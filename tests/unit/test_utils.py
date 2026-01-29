@@ -3,7 +3,7 @@ Unit tests for utils module
 """
 
 import pytest
-from src.utils import (
+from utils import (
     mask_secret,
     validate_regex,
     get_secret_metadata,

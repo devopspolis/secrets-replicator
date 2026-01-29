@@ -3,7 +3,7 @@ Unit tests for transformer module
 """
 
 import pytest
-from src.transformer import (
+from transformer import (
     SedRule,
     JsonMapping,
     parse_sedfile,

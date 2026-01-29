@@ -5,6 +5,82 @@ These are examples of real EventBridge events from AWS Secrets Manager
 via CloudTrail integration.
 """
 
+import uuid
+from datetime import datetime
+
+
+def create_test_event(
+    event_name: str,
+    secret_arn: str,
+    region: str,
+    account_id: str,
+    version_id: str = None,
+) -> dict:
+    """
+    Create a test EventBridge event for Secrets Manager operations.
+
+    Args:
+        event_name: The API event name (e.g., 'PutSecretValue', 'CreateSecret')
+        secret_arn: The ARN of the secret
+        region: AWS region (e.g., 'us-east-1')
+        account_id: AWS account ID
+        version_id: Optional version ID for the secret
+
+    Returns:
+        A properly structured EventBridge event dict
+    """
+    # Extract secret name from ARN
+    # ARN format: arn:aws:secretsmanager:region:account:secret:name-suffix
+    secret_name = secret_arn.split(":")[-1].rsplit("-", 1)[0] if ":" in secret_arn else secret_arn
+
+    if version_id is None:
+        version_id = str(uuid.uuid4())
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    return {
+        "version": "0",
+        "id": str(uuid.uuid4()),
+        "detail-type": "AWS API Call via CloudTrail",
+        "source": "aws.secretsmanager",
+        "account": account_id,
+        "time": timestamp,
+        "region": region,
+        "resources": [],
+        "detail": {
+            "eventVersion": "1.08",
+            "userIdentity": {
+                "type": "IAMUser",
+                "principalId": "AIDAEXAMPLE",
+                "arn": f"arn:aws:iam::{account_id}:user/test-user",
+                "accountId": account_id,
+                "accessKeyId": "AKIAEXAMPLE",
+                "userName": "test-user"
+            },
+            "eventTime": timestamp,
+            "eventSource": "secretsmanager.amazonaws.com",
+            "eventName": event_name,
+            "awsRegion": region,
+            "sourceIPAddress": "192.0.2.1",
+            "userAgent": "pytest/test",
+            "requestParameters": {
+                "secretId": secret_arn,
+            },
+            "responseElements": {
+                "ARN": secret_arn,
+                "name": secret_name,
+                "versionId": version_id,
+            },
+            "requestID": str(uuid.uuid4()),
+            "eventID": str(uuid.uuid4()),
+            "readOnly": False,
+            "eventType": "AwsApiCall",
+            "managementEvent": True,
+            "recipientAccountId": account_id,
+        }
+    }
+
+
 # Valid PutSecretValue event
 PUT_SECRET_VALUE_EVENT = {
     "version": "0",

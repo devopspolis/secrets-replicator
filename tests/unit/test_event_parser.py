@@ -4,7 +4,7 @@ Unit tests for event_parser module
 
 import pytest
 from datetime import datetime
-from src.event_parser import (
+from event_parser import (
     SecretEvent,
     parse_eventbridge_event,
     validate_event_for_replication,

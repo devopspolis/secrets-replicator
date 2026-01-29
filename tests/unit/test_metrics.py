@@ -5,7 +5,7 @@ Unit tests for metrics module
 import pytest
 from unittest.mock import Mock, MagicMock, patch, call
 from datetime import datetime
-from src.metrics import (
+from metrics import (
     MetricsPublisher,
     get_metrics_publisher,
     reset_metrics_publisher,
@@ -18,7 +18,7 @@ class TestMetricsPublisher:
 
     def test_init_enabled(self):
         """Test metrics publisher initialization when enabled"""
-        with patch('src.metrics.boto3.client') as mock_boto_client:
+        with patch('metrics.boto3.client') as mock_boto_client:
             mock_boto_client.return_value = Mock()
             publisher = MetricsPublisher(enabled=True)
 
@@ -35,7 +35,7 @@ class TestMetricsPublisher:
 
     def test_init_boto3_failure(self):
         """Test graceful handling of boto3 client initialization failure"""
-        with patch('src.metrics.boto3.client', side_effect=Exception('AWS error')):
+        with patch('metrics.boto3.client', side_effect=Exception('AWS error')):
             publisher = MetricsPublisher(enabled=True)
 
             assert publisher.enabled is False
@@ -43,7 +43,7 @@ class TestMetricsPublisher:
     def test_publish_replication_success(self):
         """Test publishing replication success metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_success(
@@ -73,7 +73,7 @@ class TestMetricsPublisher:
     def test_publish_replication_success_without_size(self):
         """Test publishing replication success without secret size"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_success(
@@ -93,7 +93,7 @@ class TestMetricsPublisher:
     def test_publish_replication_failure(self):
         """Test publishing replication failure metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_failure(
@@ -117,7 +117,7 @@ class TestMetricsPublisher:
     def test_publish_transformation_metrics(self):
         """Test publishing transformation metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_transformation_metrics(
@@ -144,7 +144,7 @@ class TestMetricsPublisher:
     def test_publish_retry_metrics(self):
         """Test publishing retry metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_retry_metrics(
@@ -167,7 +167,7 @@ class TestMetricsPublisher:
     def test_publish_throttling_event(self):
         """Test publishing throttling event"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_throttling_event(
@@ -199,7 +199,7 @@ class TestMetricsPublisher:
         mock_client = MagicMock()
         mock_client.put_metric_data.side_effect = Exception('CloudWatch error')
 
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             # Should not raise exception
@@ -212,7 +212,7 @@ class TestMetricsPublisher:
     def test_dimensions_included(self):
         """Test that proper dimensions are included in metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_success(
@@ -236,7 +236,7 @@ class TestMetricsPublisher:
     def test_timestamp_added_to_metrics(self):
         """Test that timestamp is added to all metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_success(
@@ -256,7 +256,7 @@ class TestMetricsPublisher:
     def test_batch_publishing(self):
         """Test that metrics are published in batches of 20"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             # Create 25 metrics (should result in 2 batches)
@@ -285,14 +285,14 @@ class TestGetMetricsPublisher:
 
     def test_get_metrics_publisher_creates_instance(self):
         """Test that get_metrics_publisher creates an instance"""
-        with patch('src.metrics.boto3.client'):
+        with patch('metrics.boto3.client'):
             publisher = get_metrics_publisher()
             assert publisher is not None
             assert isinstance(publisher, MetricsPublisher)
 
     def test_get_metrics_publisher_returns_same_instance(self):
         """Test that subsequent calls return the same instance"""
-        with patch('src.metrics.boto3.client'):
+        with patch('metrics.boto3.client'):
             publisher1 = get_metrics_publisher()
             publisher2 = get_metrics_publisher()
 
@@ -309,7 +309,7 @@ class TestResetMetricsPublisher:
 
     def test_reset_clears_global_instance(self):
         """Test that reset clears the global instance"""
-        with patch('src.metrics.boto3.client'):
+        with patch('metrics.boto3.client'):
             publisher1 = get_metrics_publisher()
             reset_metrics_publisher()
             publisher2 = get_metrics_publisher()
@@ -323,7 +323,7 @@ class TestEdgeCases:
     def test_empty_metrics_list(self):
         """Test publishing empty metrics list"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
             publisher._publish_metrics([])
 
@@ -333,7 +333,7 @@ class TestEdgeCases:
     def test_custom_namespace(self):
         """Test using custom namespace"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher(namespace='CustomNamespace')
 
             publisher.publish_replication_success(
@@ -348,7 +348,7 @@ class TestEdgeCases:
     def test_metric_units(self):
         """Test that proper units are used for metrics"""
         mock_client = MagicMock()
-        with patch('src.metrics.boto3.client', return_value=mock_client):
+        with patch('metrics.boto3.client', return_value=mock_client):
             publisher = MetricsPublisher()
 
             publisher.publish_replication_success(

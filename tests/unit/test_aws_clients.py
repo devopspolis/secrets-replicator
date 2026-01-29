@@ -4,15 +4,14 @@ Unit tests for aws_clients module
 
 import pytest
 import boto3
-from moto import mock_aws
 from unittest.mock import Mock, patch, MagicMock
 from botocore.exceptions import ClientError
-from src.aws_clients import (
+from aws_clients import (
     SecretsManagerClient,
     SecretValue,
     create_secrets_manager_client
 )
-from src.exceptions import (
+from exceptions import (
     AWSClientError,
     SecretNotFoundError,
     AccessDeniedError,
@@ -22,7 +21,6 @@ from src.exceptions import (
 )
 
 
-@mock_aws
 class TestSecretsManagerClient:
     """Tests for SecretsManagerClient class"""
 
@@ -255,7 +253,6 @@ class TestSecretsManagerClient:
             client._handle_client_error(client_error, 'test_operation')
 
 
-@mock_aws
 class TestSecretValue:
     """Tests for SecretValue dataclass"""
 
@@ -285,7 +282,6 @@ class TestSecretValue:
         assert secret.secret_string is None
 
 
-@mock_aws
 class TestFactoryFunction:
     """Tests for create_secrets_manager_client factory function"""
 
@@ -332,7 +328,6 @@ class TestFactoryFunction:
             assert client.external_id == 'test-external-id'
 
 
-@mock_aws
 class TestCrossAccountScenarios:
     """Tests for cross-account secret operations"""
 
@@ -386,7 +381,6 @@ class TestCrossAccountScenarios:
                 )
 
 
-@mock_aws
 class TestEdgeCases:
     """Tests for edge cases and special scenarios"""
 

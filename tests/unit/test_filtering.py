@@ -6,7 +6,7 @@ Tests the new centralized filter configuration system that replaces tag-based fi
 
 import pytest
 from unittest.mock import MagicMock, patch
-from src.filters import (
+from filters import (
     should_replicate_secret,
     load_filter_configuration,
     get_cached_filters,
@@ -16,7 +16,7 @@ from src.filters import (
     is_system_secret,
     get_destination_transformation
 )
-from src.config import parse_tag_filters, ReplicatorConfig, ConfigurationError, DestinationConfig
+from config import parse_tag_filters, ReplicatorConfig, ConfigurationError, DestinationConfig
 
 
 class TestParseTagFilters:

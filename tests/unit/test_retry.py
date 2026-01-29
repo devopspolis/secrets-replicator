@@ -6,7 +6,7 @@ import pytest
 import time
 from unittest.mock import Mock, patch
 from tenacity import RetryError
-from src.retry import (
+from retry import (
     should_retry_aws_error,
     add_jitter,
     with_retries,
@@ -15,7 +15,7 @@ from src.retry import (
     retry_on_transient_errors,
     ExponentialBackoffWithJitter
 )
-from src.exceptions import (
+from exceptions import (
     ThrottlingError,
     InternalServiceError,
     SecretNotFoundError,
@@ -264,7 +264,7 @@ class TestRetryOnThrottle:
         decorated = retry_on_throttle(mock_func)
 
         # Patch to speed up test
-        with patch('src.retry.with_retries_custom') as mock_decorator:
+        with patch('retry.with_retries_custom') as mock_decorator:
             mock_decorator.return_value = lambda f: f
             decorated = retry_on_throttle(mock_func)
 
@@ -286,7 +286,7 @@ class TestRetryOnTransientErrors:
         """Test that default configuration is used"""
         mock_func = Mock(return_value="success")
 
-        with patch('src.retry.with_retries') as mock_with_retries:
+        with patch('retry.with_retries') as mock_with_retries:
             mock_with_retries.return_value = lambda f: f
             decorated = retry_on_transient_errors(mock_func)
 

@@ -6,7 +6,7 @@ import json
 import logging
 import pytest
 from io import StringIO
-from src.logger import (
+from logger import (
     JsonFormatter,
     setup_logger,
     LogContext,

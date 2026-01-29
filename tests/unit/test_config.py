@@ -4,7 +4,7 @@ Unit tests for config module
 
 import os
 import pytest
-from src.config import (
+from config import (
     ReplicatorConfig,
     DestinationConfig,
     ConfigurationError,
