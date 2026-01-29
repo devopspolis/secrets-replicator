@@ -20,6 +20,7 @@ Fill the gap in AWS's native secret replication by transforming secret values du
 - [Quick Start](#quick-start)
 - [Installation](#installation)
 - [Configuration](#configuration)
+- [On-Demand Replication](#on-demand-replication)
 - [Use Cases](#use-cases)
 - [Transformations](#transformations)
 - [Monitoring](#monitoring)
@@ -66,6 +67,7 @@ AWS Secrets Manager supports [native replication](https://docs.aws.amazon.com/se
 ### Core Capabilities
 
 - ✅ **Event-Driven Replication**: Automatic replication triggered by Secrets Manager updates via EventBridge
+- ✅ **On-Demand Replication**: Manually trigger replication for pre-existing secrets via direct Lambda invocation
 - ✅ **Cross-Region**: Replicate to any AWS region with region-specific transformations
 - ✅ **Cross-Account**: Replicate to different AWS accounts with proper IAM controls and External ID
 - ✅ **Value Transformation**:
@@ -991,6 +993,131 @@ aws secretsmanager get-secret-value \
 **Cause**: Mapping cached in Lambda memory
 
 **Solution**: Wait for cache TTL to expire, or update destination config to force Lambda restart
+
+---
+
+## On-Demand Replication
+
+In addition to automatic event-driven replication, you can manually trigger replication for pre-existing secrets. This is useful for:
+
+- **Initial sync**: Replicate secrets that existed before installing secrets-replicator
+- **Re-sync**: Force replication of specific secrets after configuration changes
+- **Bulk migration**: Replicate multiple secrets at once
+
+### Invoking On-Demand Replication
+
+Use the AWS CLI to invoke the Lambda function directly with a simplified event format:
+
+#### Single Secret
+
+```bash
+aws lambda invoke \
+  --function-name secrets-replicator \
+  --payload '{"source":"manual","secretId":"my-app/database","region":"us-east-1"}' \
+  --cli-binary-format raw-in-base64-out \
+  response.json
+
+cat response.json
+```
+
+#### Multiple Secrets
+
+```bash
+aws lambda invoke \
+  --function-name secrets-replicator \
+  --payload '{"source":"manual","secretIds":["app/secret1","app/secret2","app/secret3"],"region":"us-east-1"}' \
+  --cli-binary-format raw-in-base64-out \
+  response.json
+
+cat response.json
+```
+
+### Event Format
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `source` | string | Yes | Must be `"manual"` |
+| `secretId` | string | No* | Single secret name or ARN |
+| `secretIds` | array | No* | List of secret names or ARNs |
+| `region` | string | No | Source region (defaults to `AWS_REGION` environment variable) |
+| `accountId` | string | No | Source account ID (auto-detected if not provided) |
+
+*At least one of `secretId` or `secretIds` is required.
+
+### Response Format
+
+```json
+{
+  "statusCode": 200,
+  "body": "Successfully synced 3 secret(s)",
+  "totalSecrets": 3,
+  "successful": 3,
+  "failed": 0,
+  "totalDurationMs": 1523.45,
+  "results": [
+    {
+      "secretId": "app/secret1",
+      "statusCode": 200,
+      "success": true,
+      "destinations": [...]
+    },
+    ...
+  ]
+}
+```
+
+### Examples
+
+#### Sync all secrets matching a pattern (shell script)
+
+```bash
+#!/bin/bash
+# Sync all secrets matching "myapp/*" pattern
+
+REGION="us-east-1"
+PATTERN="myapp/"
+
+# List secrets matching pattern
+SECRETS=$(aws secretsmanager list-secrets \
+  --region $REGION \
+  --query "SecretList[?starts_with(Name, '${PATTERN}')].Name" \
+  --output json)
+
+# Invoke Lambda with the list
+aws lambda invoke \
+  --function-name secrets-replicator \
+  --payload "{\"source\":\"manual\",\"secretIds\":$SECRETS,\"region\":\"$REGION\"}" \
+  --cli-binary-format raw-in-base64-out \
+  response.json
+
+cat response.json
+```
+
+#### Using AWS SDK (Python)
+
+```python
+import boto3
+import json
+
+lambda_client = boto3.client('lambda')
+
+response = lambda_client.invoke(
+    FunctionName='secrets-replicator',
+    InvocationType='RequestResponse',
+    Payload=json.dumps({
+        'source': 'manual',
+        'secretIds': [
+            'app/database/credentials',
+            'app/api/keys',
+            'app/cache/config'
+        ],
+        'region': 'us-east-1'
+    })
+)
+
+result = json.loads(response['Payload'].read())
+print(json.dumps(result, indent=2))
+```
 
 ---
 

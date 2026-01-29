@@ -1,12 +1,14 @@
 """
 Event parser for AWS EventBridge events from Secrets Manager.
 
-Handles parsing CloudTrail events for secret updates triggered via EventBridge.
+Handles parsing CloudTrail events for secret updates triggered via EventBridge,
+as well as simplified manual trigger events for on-demand replication.
 """
 
+import os
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
-from datetime import datetime
+from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone
 
 
 class EventParsingError(Exception):
@@ -306,3 +308,189 @@ def extract_secret_name_from_arn(arn: str) -> Optional[str]:
 
     except (IndexError, AttributeError):
         return None
+
+
+# =============================================================================
+# Manual Trigger Event Support
+# =============================================================================
+
+def is_manual_trigger(event: Dict[str, Any]) -> bool:
+    """
+    Check if an event is a manual trigger for on-demand replication.
+
+    Manual trigger events have a simplified format for easy invocation
+    via AWS CLI, SDK, or Console.
+
+    Supported formats:
+    1. Single secret:
+       {"source": "manual", "secretId": "my-secret"}
+
+    2. Multiple secrets:
+       {"source": "manual", "secretIds": ["secret1", "secret2"]}
+
+    3. With explicit region:
+       {"source": "manual", "secretIds": ["secret1"], "region": "us-west-2"}
+
+    Args:
+        event: Event dictionary
+
+    Returns:
+        True if this is a manual trigger event, False otherwise
+
+    Examples:
+        >>> is_manual_trigger({"source": "manual", "secretId": "test"})
+        True
+        >>> is_manual_trigger({"source": "aws.secretsmanager", "detail": {}})
+        False
+    """
+    if not isinstance(event, dict):
+        return False
+
+    return event.get('source') == 'manual'
+
+
+def parse_manual_event(event: Dict[str, Any], account_id: str = '') -> List[SecretEvent]:
+    """
+    Parse a manual trigger event into a list of SecretEvent objects.
+
+    This allows on-demand replication of pre-existing secrets without
+    having to construct complex CloudTrail event structures.
+
+    Args:
+        event: Manual trigger event dictionary
+        account_id: AWS account ID (from STS if not in event)
+
+    Returns:
+        List of SecretEvent objects, one per secret
+
+    Raises:
+        EventParsingError: If event is invalid or missing required fields
+
+    Examples:
+        >>> event = {"source": "manual", "secretId": "my-secret", "region": "us-east-1"}
+        >>> events = parse_manual_event(event, "123456789012")
+        >>> len(events)
+        1
+        >>> events[0].secret_id
+        'my-secret'
+        >>> events[0].event_name
+        'ManualSync'
+    """
+    if not is_manual_trigger(event):
+        raise EventParsingError("Event is not a manual trigger (source != 'manual')")
+
+    # Extract secret IDs - support both singular and plural forms
+    secret_ids = []
+
+    if 'secretId' in event:
+        # Single secret
+        secret_id = event['secretId']
+        if isinstance(secret_id, str) and secret_id.strip():
+            secret_ids.append(secret_id.strip())
+        else:
+            raise EventParsingError("'secretId' must be a non-empty string")
+
+    if 'secretIds' in event:
+        # Multiple secrets
+        ids = event['secretIds']
+        if isinstance(ids, list):
+            for sid in ids:
+                if isinstance(sid, str) and sid.strip():
+                    secret_ids.append(sid.strip())
+                else:
+                    raise EventParsingError("Each item in 'secretIds' must be a non-empty string")
+        else:
+            raise EventParsingError("'secretIds' must be a list of strings")
+
+    if not secret_ids:
+        raise EventParsingError("Manual trigger requires 'secretId' or 'secretIds'")
+
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_secret_ids = []
+    for sid in secret_ids:
+        if sid not in seen:
+            seen.add(sid)
+            unique_secret_ids.append(sid)
+
+    # Extract region - use event value, env var, or default
+    region = event.get('region', '')
+    if not region:
+        region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', ''))
+    if not region:
+        raise EventParsingError(
+            "Region required: provide 'region' in event or set AWS_REGION environment variable"
+        )
+
+    # Extract account ID - use event value or passed parameter
+    event_account_id = event.get('accountId', '') or account_id
+    # Account ID is optional for manual events - will be populated later if needed
+
+    # Current time for event
+    now = datetime.now(timezone.utc)
+
+    # Create SecretEvent for each secret
+    events = []
+    for secret_id in unique_secret_ids:
+        # Determine if secret_id is an ARN
+        secret_arn = secret_id if secret_id.startswith('arn:') else None
+
+        events.append(SecretEvent(
+            event_name='ManualSync',
+            secret_id=secret_id,
+            secret_arn=secret_arn,
+            version_id=None,
+            region=region,
+            account_id=event_account_id,
+            event_time=now,
+            user_identity='manual-trigger',
+            source_ip=None,
+            request_parameters={'secretId': secret_id, 'manual': True},
+            response_elements={}
+        ))
+
+    return events
+
+
+def validate_manual_event_for_replication(event: SecretEvent) -> bool:
+    """
+    Validate that a manual trigger event should trigger replication.
+
+    For manual events, we only check that required fields are present.
+    The event_name check is relaxed since 'ManualSync' is synthetic.
+
+    Args:
+        event: Parsed SecretEvent from manual trigger
+
+    Returns:
+        True if event should trigger replication, False otherwise
+
+    Examples:
+        >>> event = SecretEvent(
+        ...     event_name='ManualSync',
+        ...     secret_id='my-secret',
+        ...     secret_arn=None,
+        ...     version_id=None,
+        ...     region='us-east-1',
+        ...     account_id='123',
+        ...     event_time=datetime.now(),
+        ...     user_identity='manual-trigger',
+        ...     source_ip=None,
+        ...     request_parameters={'manual': True},
+        ...     response_elements={}
+        ... )
+        >>> validate_manual_event_for_replication(event)
+        True
+    """
+    # Check it's actually a manual event
+    if event.event_name != 'ManualSync':
+        return False
+
+    # Check required fields
+    if not event.secret_id:
+        return False
+
+    if not event.region:
+        return False
+
+    return True
