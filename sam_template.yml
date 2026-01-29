@@ -84,6 +84,7 @@ Resources:
               Action:
                 - secretsmanager:CreateSecret
                 - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
               Resource: '*'
 
             # KMS permissions for encrypting/decrypting secrets (any region)

@@ -234,13 +234,20 @@ class SecretsManagerClient:
             exists = self.secret_exists(secret_id)
 
             if exists:
-                # Update existing secret
+                # Update existing secret value
                 params = {
                     'SecretId': secret_id,
                     'SecretString': secret_value
                 }
 
                 response = self._client.put_secret_value(**params)
+
+                # Update description if provided (requires separate API call)
+                if description is not None:
+                    self._client.update_secret(
+                        SecretId=secret_id,
+                        Description=description
+                    )
 
             else:
                 # Create new secret
@@ -325,6 +332,33 @@ class SecretsManagerClient:
             return {tag['Key']: tag['Value'] for tag in tags_list}
         except ClientError as e:
             self._handle_client_error(e, f'get_secret_tags({secret_id})')
+
+    def get_secret_description(self, secret_id: str) -> Optional[str]:
+        """
+        Get description for a secret.
+
+        Args:
+            secret_id: Secret name or ARN
+
+        Returns:
+            Description string, or None if no description is set
+
+        Raises:
+            SecretNotFoundError: If secret doesn't exist
+            AccessDeniedError: If access is denied
+            AWSClientError: For other AWS errors
+
+        Examples:
+            >>> client = SecretsManagerClient('us-east-1')
+            >>> desc = client.get_secret_description('my-secret')
+            >>> desc
+            'Database credentials for production'
+        """
+        try:
+            response = self._client.describe_secret(SecretId=secret_id)
+            return response.get('Description')
+        except ClientError as e:
+            self._handle_client_error(e, f'get_secret_description({secret_id})')
 
     def _handle_client_error(self, error: ClientError, operation: str) -> None:
         """

@@ -229,6 +229,9 @@ def process_single_secret(
 
         source_secret = source_client.get_secret(secret_event.secret_id)
 
+        # Get source secret description to preserve it in destination
+        source_description = source_client.get_secret_description(secret_event.secret_id)
+
         # Check if secret is binary (no transformation for binary secrets)
         is_binary = bool(source_secret.secret_binary)
         if is_binary:
@@ -480,7 +483,7 @@ def process_single_secret(
                     secret_id=dest_secret_name,
                     secret_value=transformed_value,
                     kms_key_id=destination.kms_key_id,
-                    description=f'Replicated from {secret_event.region}/{secret_event.secret_id}'
+                    description=source_description
                 )
 
             dest_duration_ms = (time.time() - start_time) * 1000
