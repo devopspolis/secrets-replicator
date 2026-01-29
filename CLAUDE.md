@@ -274,7 +274,6 @@ secrets-replicator/
 │   ├── lambda-role.json        # Source account role
 │   └── destination-role.json   # Destination account role
 ├── template.yaml               # AWS SAM template
-├── samconfig.toml              # SAM CLI config
 ├── requirements.txt            # Python dependencies
 ├── README.md                   # User-facing documentation
 ├── ARCHITECTURE.md             # Technical architecture

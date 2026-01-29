@@ -208,7 +208,6 @@ __marimo__/
 
 # AWS SAM
 .aws-sam/
-samconfig.toml
 packaged.yaml
 packaged-*.yaml
 
@@ -223,7 +222,3 @@ credentials
 # Local test data
 test-secrets/
 local-sedfiles/
-# Private keys and secrets
-rsa-private-key
-*.pem
-*.key
