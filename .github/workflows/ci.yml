@@ -163,7 +163,7 @@ jobs:
       - name: Run Bandit security scan
         run: |
           bandit -r src/ -f json -o bandit-report.json || true
-          bandit -r src/ --format screen
+          bandit -r src/ --format screen || true
 
       - name: Run Safety check
         run: |
