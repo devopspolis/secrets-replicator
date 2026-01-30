@@ -201,6 +201,80 @@ class TestSecretsManagerClient:
         client = SecretsManagerClient(region='us-east-1')
         assert client.secret_exists('non-existent') is False
 
+    def test_get_secret_description_with_description(self):
+        """Test get_secret_description returns description when set"""
+        sm_client = boto3.client('secretsmanager', region_name='us-east-1')
+        sm_client.create_secret(
+            Name='secret-with-desc',
+            SecretString='value',
+            Description='Test description for secret'
+        )
+
+        client = SecretsManagerClient(region='us-east-1')
+        description = client.get_secret_description('secret-with-desc')
+
+        assert description == 'Test description for secret'
+
+    def test_get_secret_description_without_description(self):
+        """Test get_secret_description returns None when no description set"""
+        sm_client = boto3.client('secretsmanager', region_name='us-east-1')
+        sm_client.create_secret(
+            Name='secret-no-desc',
+            SecretString='value'
+        )
+
+        client = SecretsManagerClient(region='us-east-1')
+        description = client.get_secret_description('secret-no-desc')
+
+        assert description is None
+
+    def test_get_secret_description_not_found(self):
+        """Test get_secret_description raises error for non-existent secret"""
+        client = SecretsManagerClient(region='us-east-1')
+
+        with pytest.raises(SecretNotFoundError):
+            client.get_secret_description('non-existent-secret')
+
+    def test_put_secret_updates_description_on_existing(self):
+        """Test put_secret updates description when secret already exists"""
+        sm_client = boto3.client('secretsmanager', region_name='us-east-1')
+        sm_client.create_secret(
+            Name='secret-to-update',
+            SecretString='original-value',
+            Description='Original description'
+        )
+
+        client = SecretsManagerClient(region='us-east-1')
+        client.put_secret(
+            secret_id='secret-to-update',
+            secret_value='new-value',
+            description='Updated description'
+        )
+
+        # Verify description was updated
+        result = sm_client.describe_secret(SecretId='secret-to-update')
+        assert result['Description'] == 'Updated description'
+
+    def test_put_secret_preserves_none_description(self):
+        """Test put_secret does not update description when None is passed"""
+        sm_client = boto3.client('secretsmanager', region_name='us-east-1')
+        sm_client.create_secret(
+            Name='secret-keep-desc',
+            SecretString='original-value',
+            Description='Should remain unchanged'
+        )
+
+        client = SecretsManagerClient(region='us-east-1')
+        client.put_secret(
+            secret_id='secret-keep-desc',
+            secret_value='new-value',
+            description=None
+        )
+
+        # Verify description was NOT updated
+        result = sm_client.describe_secret(SecretId='secret-keep-desc')
+        assert result['Description'] == 'Should remain unchanged'
+
     def test_handle_client_error_access_denied(self):
         """Test that AccessDenied errors are properly mapped"""
         client = SecretsManagerClient(region='us-east-1')
