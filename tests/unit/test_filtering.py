@@ -14,7 +14,7 @@ from filters import (
     find_matching_filter,
     clear_filter_cache,
     is_system_secret,
-    get_destination_transformation
+    get_destination_transformation,
 )
 from config import parse_tag_filters, ReplicatorConfig, ConfigurationError, DestinationConfig
 
@@ -35,19 +35,12 @@ class TestParseTagFilters:
     def test_parse_multiple_tags(self):
         """Parse multiple tag filters"""
         result = parse_tag_filters("Env=prod,App=webapp,Team=backend")
-        assert result == [
-            ("Env", "prod"),
-            ("App", "webapp"),
-            ("Team", "backend")
-        ]
+        assert result == [("Env", "prod"), ("App", "webapp"), ("Team", "backend")]
 
     def test_parse_tags_with_whitespace(self):
         """Parse tags with extra whitespace"""
         result = parse_tag_filters("  Env = prod , App = webapp  ")
-        assert result == [
-            ("Env", "prod"),
-            ("App", "webapp")
-        ]
+        assert result == [("Env", "prod"), ("App", "webapp")]
 
     def test_parse_tag_with_equals_in_value(self):
         """Parse tag where value contains equals sign"""
@@ -108,34 +101,23 @@ class TestFindMatchingFilter:
 
     def test_exact_match_priority(self):
         """Exact match takes priority over wildcard"""
-        filters = {
-            "app/*": "default-transform",
-            "app/prod/db": "specific-transform"
-        }
+        filters = {"app/*": "default-transform", "app/prod/db": "specific-transform"}
         assert find_matching_filter("app/prod/db", filters) == "specific-transform"
 
     def test_wildcard_match(self):
         """Wildcard pattern matching"""
-        filters = {
-            "app/prod/*": "region-swap",
-            "db/*": "connection-transform"
-        }
+        filters = {"app/prod/*": "region-swap", "db/*": "connection-transform"}
         assert find_matching_filter("app/prod/api", filters) == "region-swap"
         assert find_matching_filter("db/mysql", filters) == "connection-transform"
 
     def test_no_match_returns_false(self):
         """No matching pattern returns False"""
-        filters = {
-            "app/*": "region-swap"
-        }
+        filters = {"app/*": "region-swap"}
         assert find_matching_filter("other-secret", filters) is False
 
     def test_empty_transformation(self):
         """Empty/null transformation value returns None"""
-        filters = {
-            "critical-secret": None,
-            "app/*": ""
-        }
+        filters = {"critical-secret": None, "app/*": ""}
         # Note: empty string is normalized to None during loading
         assert find_matching_filter("critical-secret", filters) is None
 
@@ -156,29 +138,22 @@ class TestLoadFilterConfiguration:
 
         filters = load_filter_configuration("secrets-replicator/filters/prod", mock_client)
 
-        assert filters == {
-            "app/*": "region-swap",
-            "db/*": "connection-transform"
-        }
+        assert filters == {"app/*": "region-swap", "db/*": "connection-transform"}
 
     def test_load_multiple_filter_secrets(self):
         """Load and merge filters from multiple secrets"""
         mock_client = MagicMock()
         mock_client.get_secret.side_effect = [
             MagicMock(secret_string='{"app/*": "transform-a"}'),
-            MagicMock(secret_string='{"db/*": "transform-b", "app/*": "transform-c"}')
+            MagicMock(secret_string='{"db/*": "transform-b", "app/*": "transform-c"}'),
         ]
 
         filters = load_filter_configuration(
-            "secrets-replicator/filters/a,secrets-replicator/filters/b",
-            mock_client
+            "secrets-replicator/filters/a,secrets-replicator/filters/b", mock_client
         )
 
         # Later filter overrides earlier one for app/*
-        assert filters == {
-            "app/*": "transform-c",
-            "db/*": "transform-b"
-        }
+        assert filters == {"app/*": "transform-c", "db/*": "transform-b"}
 
     def test_load_empty_filter_list(self):
         """Empty filter list returns empty dict"""
@@ -195,10 +170,7 @@ class TestLoadFilterConfiguration:
 
         filters = load_filter_configuration("secrets-replicator/filters/test", mock_client)
 
-        assert filters == {
-            "secret-a": None,
-            "secret-b": None
-        }
+        assert filters == {"secret-a": None, "secret-b": None}
 
 
 class TestGetCachedFilters:
@@ -211,9 +183,7 @@ class TestGetCachedFilters:
     def test_cache_miss_loads_filters(self):
         """Cache miss triggers filter loading"""
         mock_client = MagicMock()
-        mock_client.get_secret.return_value = MagicMock(
-            secret_string='{"app/*": "transform"}'
-        )
+        mock_client.get_secret.return_value = MagicMock(secret_string='{"app/*": "transform"}')
 
         filters = get_cached_filters("secrets-replicator/filters/test", 300, mock_client)
 
@@ -223,9 +193,7 @@ class TestGetCachedFilters:
     def test_cache_hit_skips_loading(self):
         """Cache hit returns cached filters without loading"""
         mock_client = MagicMock()
-        mock_client.get_secret.return_value = MagicMock(
-            secret_string='{"app/*": "transform"}'
-        )
+        mock_client.get_secret.return_value = MagicMock(secret_string='{"app/*": "transform"}')
 
         # First call - cache miss
         get_cached_filters("secrets-replicator/filters/test", 300, mock_client)
@@ -241,7 +209,7 @@ class TestGetCachedFilters:
         mock_client = MagicMock()
         mock_client.get_secret.side_effect = [
             MagicMock(secret_string='{"app/*": "transform-a"}'),
-            MagicMock(secret_string='{"db/*": "transform-b"}')
+            MagicMock(secret_string='{"db/*": "transform-b"}'),
         ]
 
         # First call with filter-a
@@ -266,9 +234,7 @@ class TestShouldReplicateHardcodedExclusions:
     def test_transformation_secret_excluded(self):
         """Transformation secrets are always excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/transformations/my-sed',
-            self.config,
-            self.mock_client
+            "secrets-replicator/transformations/my-sed", self.config, self.mock_client
         )
         assert result is False
         assert transform is None
@@ -276,9 +242,7 @@ class TestShouldReplicateHardcodedExclusions:
     def test_transformation_secret_nested_excluded(self):
         """Nested transformation secrets are excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/transformations/databases/prod-db',
-            self.config,
-            self.mock_client
+            "secrets-replicator/transformations/databases/prod-db", self.config, self.mock_client
         )
         assert result is False
         assert transform is None
@@ -286,9 +250,7 @@ class TestShouldReplicateHardcodedExclusions:
     def test_filter_secret_excluded(self):
         """Filter secrets are always excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/filters/prod',
-            self.config,
-            self.mock_client
+            "secrets-replicator/filters/prod", self.config, self.mock_client
         )
         assert result is False
         assert transform is None
@@ -296,9 +258,7 @@ class TestShouldReplicateHardcodedExclusions:
     def test_config_secret_excluded(self):
         """Config secrets are always excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/config/destinations',
-            self.config,
-            self.mock_client
+            "secrets-replicator/config/destinations", self.config, self.mock_client
         )
         assert result is False
         assert transform is None
@@ -306,9 +266,7 @@ class TestShouldReplicateHardcodedExclusions:
     def test_name_mapping_secret_excluded(self):
         """Name mapping secrets are always excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/names/prod-mappings',
-            self.config,
-            self.mock_client
+            "secrets-replicator/names/prod-mappings", self.config, self.mock_client
         )
         assert result is False
         assert transform is None
@@ -325,30 +283,20 @@ class TestShouldReplicateNoFilter:
 
     def test_no_filter_allows_all_secrets(self):
         """Without SECRETS_FILTER, all secrets are allowed"""
-        result, transform = should_replicate_secret(
-            'any-secret',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("any-secret", self.config, self.mock_client)
         assert result is True
         assert transform is None
 
     def test_no_filter_no_transformation(self):
         """Without SECRETS_FILTER, no transformation is applied"""
-        result, transform = should_replicate_secret(
-            'prod-db',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("prod-db", self.config, self.mock_client)
         assert result is True
         assert transform is None
 
     def test_no_filter_still_excludes_system_secrets(self):
         """Without SECRETS_FILTER, system secrets are still excluded"""
         result, transform = should_replicate_secret(
-            'secrets-replicator/transformations/test',
-            self.config,
-            self.mock_client
+            "secrets-replicator/transformations/test", self.config, self.mock_client
         )
         assert result is False
 
@@ -360,8 +308,7 @@ class TestShouldReplicateWithFilter:
         """Clear cache and create config with SECRETS_FILTER"""
         clear_filter_cache()
         self.config = ReplicatorConfig(
-            destinations=[],
-            secrets_filter='secrets-replicator/filters/prod'
+            destinations=[], secrets_filter="secrets-replicator/filters/prod"
         )
         self.mock_client = MagicMock()
 
@@ -371,14 +318,10 @@ class TestShouldReplicateWithFilter:
             secret_string='{"app/prod/*": "region-swap"}'
         )
 
-        result, transform = should_replicate_secret(
-            'app/prod/db',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("app/prod/db", self.config, self.mock_client)
 
         assert result is True
-        assert transform == 'region-swap'
+        assert transform == "region-swap"
 
     def test_filter_match_without_transformation(self):
         """Filter match with null transformation replicates without transform"""
@@ -387,9 +330,7 @@ class TestShouldReplicateWithFilter:
         )
 
         result, transform = should_replicate_secret(
-            'critical-secret',
-            self.config,
-            self.mock_client
+            "critical-secret", self.config, self.mock_client
         )
 
         assert result is True
@@ -401,11 +342,7 @@ class TestShouldReplicateWithFilter:
             secret_string='{"app/prod/*": "region-swap"}'
         )
 
-        result, transform = should_replicate_secret(
-            'other-secret',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("other-secret", self.config, self.mock_client)
 
         assert result is False
         assert transform is None
@@ -414,26 +351,16 @@ class TestShouldReplicateWithFilter:
         """Filter loading failure denies replication for safety"""
         self.mock_client.get_secret.side_effect = Exception("Access denied")
 
-        result, transform = should_replicate_secret(
-            'any-secret',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("any-secret", self.config, self.mock_client)
 
         assert result is False
         assert transform is None
 
     def test_empty_filters_denies_replication(self):
         """Empty filters (all failed to load) denies replication"""
-        self.mock_client.get_secret.return_value = MagicMock(
-            secret_string='{}'
-        )
+        self.mock_client.get_secret.return_value = MagicMock(secret_string="{}")
 
-        result, transform = should_replicate_secret(
-            'any-secret',
-            self.config,
-            self.mock_client
-        )
+        result, transform = should_replicate_secret("any-secret", self.config, self.mock_client)
 
         assert result is False
         assert transform is None
@@ -448,62 +375,58 @@ class TestShouldReplicateComplexScenarios:
 
     def test_production_secrets_only(self):
         """Replicate only production secrets"""
-        config = ReplicatorConfig(
-            destinations=[],
-            secrets_filter='secrets-replicator/filters/prod'
-        )
+        config = ReplicatorConfig(destinations=[], secrets_filter="secrets-replicator/filters/prod")
         mock_client = MagicMock()
         mock_client.get_secret.return_value = MagicMock(
             secret_string='{"app/prod/*": "region-swap", "db/prod/*": "connection-transform"}'
         )
 
         # Production secrets are replicated
-        result, transform = should_replicate_secret('app/prod/api', config, mock_client)
+        result, transform = should_replicate_secret("app/prod/api", config, mock_client)
         assert result is True
-        assert transform == 'region-swap'
+        assert transform == "region-swap"
 
         # Non-production secrets are denied
         clear_filter_cache()  # Clear cache to reload filters
         mock_client.get_secret.return_value = MagicMock(
             secret_string='{"app/prod/*": "region-swap", "db/prod/*": "connection-transform"}'
         )
-        result, transform = should_replicate_secret('app/dev/api', config, mock_client)
+        result, transform = should_replicate_secret("app/dev/api", config, mock_client)
         assert result is False
 
     def test_transformation_chain(self):
         """Comma-separated transformation names in filter"""
         config = ReplicatorConfig(
-            destinations=[],
-            secrets_filter='secrets-replicator/filters/complex'
+            destinations=[], secrets_filter="secrets-replicator/filters/complex"
         )
         mock_client = MagicMock()
         mock_client.get_secret.return_value = MagicMock(
             secret_string='{"app/prod/*": "region-swap,endpoint-update"}'
         )
 
-        result, transform = should_replicate_secret('app/prod/api', config, mock_client)
+        result, transform = should_replicate_secret("app/prod/api", config, mock_client)
 
         assert result is True
-        assert transform == 'region-swap,endpoint-update'
+        assert transform == "region-swap,endpoint-update"
 
     def test_multiple_filter_secrets(self):
         """Multiple filter secrets are merged correctly"""
         config = ReplicatorConfig(
             destinations=[],
-            secrets_filter='secrets-replicator/filters/base,secrets-replicator/filters/override'
+            secrets_filter="secrets-replicator/filters/base,secrets-replicator/filters/override",
         )
         mock_client = MagicMock()
         mock_client.get_secret.side_effect = [
             MagicMock(secret_string='{"app/*": "base-transform"}'),
-            MagicMock(secret_string='{"app/prod/*": "prod-transform"}')
+            MagicMock(secret_string='{"app/prod/*": "prod-transform"}'),
         ]
 
         # Both patterns match, but app/* is checked first (dict iteration order)
         # The merged dict has both patterns, first wildcard match wins
-        result, transform = should_replicate_secret('app/prod/db', config, mock_client)
+        result, transform = should_replicate_secret("app/prod/db", config, mock_client)
         assert result is True
         # First wildcard match wins (app/* matches before app/prod/*)
-        assert transform == 'base-transform'
+        assert transform == "base-transform"
 
 
 class TestIsSystemSecret:
@@ -511,26 +434,26 @@ class TestIsSystemSecret:
 
     def test_transformation_secret(self):
         """Transformation secrets are system secrets"""
-        assert is_system_secret('secrets-replicator/transformations/my-sed') is True
-        assert is_system_secret('secrets-replicator/transformations/nested/path') is True
+        assert is_system_secret("secrets-replicator/transformations/my-sed") is True
+        assert is_system_secret("secrets-replicator/transformations/nested/path") is True
 
     def test_filter_secret(self):
         """Filter secrets are system secrets"""
-        assert is_system_secret('secrets-replicator/filters/prod') is True
+        assert is_system_secret("secrets-replicator/filters/prod") is True
 
     def test_config_secret(self):
         """Config secrets are system secrets"""
-        assert is_system_secret('secrets-replicator/config/destinations') is True
+        assert is_system_secret("secrets-replicator/config/destinations") is True
 
     def test_names_secret(self):
         """Name mapping secrets are system secrets"""
-        assert is_system_secret('secrets-replicator/names/prod-mappings') is True
+        assert is_system_secret("secrets-replicator/names/prod-mappings") is True
 
     def test_normal_secret(self):
         """Normal secrets are not system secrets"""
-        assert is_system_secret('app/prod/database') is False
-        assert is_system_secret('my-secret') is False
-        assert is_system_secret('transformations/old-style') is False
+        assert is_system_secret("app/prod/database") is False
+        assert is_system_secret("my-secret") is False
+        assert is_system_secret("transformations/old-style") is False
 
 
 class TestGetDestinationTransformation:
@@ -543,35 +466,28 @@ class TestGetDestinationTransformation:
     def test_destination_with_filters(self):
         """Destination-level filters override global config"""
         destination = DestinationConfig(
-            region='us-west-2',
-            filters='secrets-replicator/filters/us-west-2'
+            region="us-west-2", filters="secrets-replicator/filters/us-west-2"
         )
         global_config = ReplicatorConfig(
-            destinations=[],
-            secrets_filter='secrets-replicator/filters/global'
+            destinations=[], secrets_filter="secrets-replicator/filters/global"
         )
         mock_client = MagicMock()
-        mock_client.get_secret.return_value = MagicMock(
-            secret_string='{"app/*": "west-transform"}'
-        )
+        mock_client.get_secret.return_value = MagicMock(secret_string='{"app/*": "west-transform"}')
 
         result, transform = get_destination_transformation(
-            'app/prod/db', destination, global_config, mock_client
+            "app/prod/db", destination, global_config, mock_client
         )
 
         assert result is True
-        assert transform == 'west-transform'
+        assert transform == "west-transform"
         # Should load destination filter, not global
-        mock_client.get_secret.assert_called_with(
-            secret_id='secrets-replicator/filters/us-west-2'
-        )
+        mock_client.get_secret.assert_called_with(secret_id="secrets-replicator/filters/us-west-2")
 
     def test_destination_without_filters_uses_global(self):
         """Destination without filters uses global SECRETS_FILTER"""
-        destination = DestinationConfig(region='us-west-2')  # No filters
+        destination = DestinationConfig(region="us-west-2")  # No filters
         global_config = ReplicatorConfig(
-            destinations=[],
-            secrets_filter='secrets-replicator/filters/global'
+            destinations=[], secrets_filter="secrets-replicator/filters/global"
         )
         mock_client = MagicMock()
         mock_client.get_secret.return_value = MagicMock(
@@ -579,24 +495,22 @@ class TestGetDestinationTransformation:
         )
 
         result, transform = get_destination_transformation(
-            'app/prod/db', destination, global_config, mock_client
+            "app/prod/db", destination, global_config, mock_client
         )
 
         assert result is True
-        assert transform == 'global-transform'
+        assert transform == "global-transform"
         # Should load global filter
-        mock_client.get_secret.assert_called_with(
-            secret_id='secrets-replicator/filters/global'
-        )
+        mock_client.get_secret.assert_called_with(secret_id="secrets-replicator/filters/global")
 
     def test_no_filters_anywhere(self):
         """No filters configured - allow all, no transformation"""
-        destination = DestinationConfig(region='us-west-2')
+        destination = DestinationConfig(region="us-west-2")
         global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
         mock_client = MagicMock()
 
         result, transform = get_destination_transformation(
-            'any-secret', destination, global_config, mock_client
+            "any-secret", destination, global_config, mock_client
         )
 
         assert result is True
@@ -607,17 +521,14 @@ class TestGetDestinationTransformation:
     def test_secret_not_matching_destination_filter(self):
         """Secret not matching destination filter is denied"""
         destination = DestinationConfig(
-            region='us-west-2',
-            filters='secrets-replicator/filters/us-west-2'
+            region="us-west-2", filters="secrets-replicator/filters/us-west-2"
         )
         global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
         mock_client = MagicMock()
-        mock_client.get_secret.return_value = MagicMock(
-            secret_string='{"app/prod/*": "transform"}'
-        )
+        mock_client.get_secret.return_value = MagicMock(secret_string='{"app/prod/*": "transform"}')
 
         result, transform = get_destination_transformation(
-            'other-secret', destination, global_config, mock_client
+            "other-secret", destination, global_config, mock_client
         )
 
         assert result is False
@@ -628,24 +539,22 @@ class TestGetDestinationTransformation:
         clear_filter_cache()
 
         dest_west = DestinationConfig(
-            region='us-west-2',
-            filters='secrets-replicator/filters/us-west-2'
+            region="us-west-2", filters="secrets-replicator/filters/us-west-2"
         )
         dest_east = DestinationConfig(
-            region='us-east-1',
-            filters='secrets-replicator/filters/us-east-1'
+            region="us-east-1", filters="secrets-replicator/filters/us-east-1"
         )
         global_config = ReplicatorConfig(destinations=[], secrets_filter=None)
 
         mock_client = MagicMock()
         mock_client.get_secret.side_effect = [
             MagicMock(secret_string='{"app/*": "west-transform"}'),
-            MagicMock(secret_string='{"app/*": "east-transform"}')
+            MagicMock(secret_string='{"app/*": "east-transform"}'),
         ]
 
         # Check west destination
         result_west, transform_west = get_destination_transformation(
-            'app/db', dest_west, global_config, mock_client
+            "app/db", dest_west, global_config, mock_client
         )
 
         # Clear cache to force reload for different destination
@@ -653,10 +562,10 @@ class TestGetDestinationTransformation:
 
         # Check east destination
         result_east, transform_east = get_destination_transformation(
-            'app/db', dest_east, global_config, mock_client
+            "app/db", dest_east, global_config, mock_client
         )
 
         assert result_west is True
-        assert transform_west == 'west-transform'
+        assert transform_west == "west-transform"
         assert result_east is True
-        assert transform_east == 'east-transform'
+        assert transform_east == "east-transform"

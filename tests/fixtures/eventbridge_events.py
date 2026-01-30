@@ -55,7 +55,7 @@ def create_test_event(
                 "arn": f"arn:aws:iam::{account_id}:user/test-user",
                 "accountId": account_id,
                 "accessKeyId": "AKIAEXAMPLE",
-                "userName": "test-user"
+                "userName": "test-user",
             },
             "eventTime": timestamp,
             "eventSource": "secretsmanager.amazonaws.com",
@@ -77,7 +77,7 @@ def create_test_event(
             "eventType": "AwsApiCall",
             "managementEvent": True,
             "recipientAccountId": account_id,
-        }
+        },
     }
 
 
@@ -99,7 +99,7 @@ PUT_SECRET_VALUE_EVENT = {
             "arn": "arn:aws:iam::123456789012:user/alice",
             "accountId": "123456789012",
             "accessKeyId": "AKIAI44QH8DHBEXAMPLE",
-            "userName": "alice"
+            "userName": "alice",
         },
         "eventTime": "2025-01-01T12:00:00Z",
         "eventSource": "secretsmanager.amazonaws.com",
@@ -109,20 +109,20 @@ PUT_SECRET_VALUE_EVENT = {
         "userAgent": "aws-cli/2.0.0",
         "requestParameters": {
             "secretId": "my-secret",
-            "secretString": "HIDDEN_DUE_TO_SECURITY_REASONS"
+            "secretString": "HIDDEN_DUE_TO_SECURITY_REASONS",
         },
         "responseElements": {
             "ARN": "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf",
             "name": "my-secret",
-            "versionId": "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111"
+            "versionId": "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111",
         },
         "requestID": "example-request-id",
         "eventID": "example-event-id",
         "readOnly": False,
         "eventType": "AwsApiCall",
         "managementEvent": True,
-        "recipientAccountId": "123456789012"
-    }
+        "recipientAccountId": "123456789012",
+    },
 }
 
 # UpdateSecret event
@@ -149,9 +149,9 @@ UPDATE_SECRET_EVENT = {
                     "principalId": "AROAI23HXX2LMQ6EXAMPLE",
                     "arn": "arn:aws:iam::123456789012:role/MyRole",
                     "accountId": "123456789012",
-                    "userName": "MyRole"
+                    "userName": "MyRole",
                 }
-            }
+            },
         },
         "eventTime": "2025-01-01T13:00:00Z",
         "eventSource": "secretsmanager.amazonaws.com",
@@ -161,20 +161,20 @@ UPDATE_SECRET_EVENT = {
         "userAgent": "aws-sdk-python/1.0.0",
         "requestParameters": {
             "secretId": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod-db-password-XyZ123",
-            "description": "Updated production database password"
+            "description": "Updated production database password",
         },
         "responseElements": {
             "ARN": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod-db-password-XyZ123",
             "name": "prod-db-password",
-            "versionId": "b2c3d4e5-6789-01bc-defg-EXAMPLE22222"
+            "versionId": "b2c3d4e5-6789-01bc-defg-EXAMPLE22222",
         },
         "requestID": "example-request-id-2",
         "eventID": "example-event-id-2",
         "readOnly": False,
         "eventType": "AwsApiCall",
         "managementEvent": True,
-        "recipientAccountId": "123456789012"
-    }
+        "recipientAccountId": "123456789012",
+    },
 }
 
 # CreateSecret event
@@ -195,7 +195,7 @@ CREATE_SECRET_EVENT = {
             "arn": "arn:aws:iam::123456789012:user/bob",
             "accountId": "123456789012",
             "accessKeyId": "AKIAI44QH8DHBEXAMPLE",
-            "userName": "bob"
+            "userName": "bob",
         },
         "eventTime": "2025-01-01T14:00:00Z",
         "eventSource": "secretsmanager.amazonaws.com",
@@ -205,20 +205,20 @@ CREATE_SECRET_EVENT = {
         "userAgent": "console.amazonaws.com",
         "requestParameters": {
             "name": "new-secret",
-            "secretString": "HIDDEN_DUE_TO_SECURITY_REASONS"
+            "secretString": "HIDDEN_DUE_TO_SECURITY_REASONS",
         },
         "responseElements": {
             "ARN": "arn:aws:secretsmanager:us-west-2:123456789012:secret:new-secret-MnOpQr",
             "name": "new-secret",
-            "versionId": "c3d4e5f6-7890-12cd-efgh-EXAMPLE33333"
+            "versionId": "c3d4e5f6-7890-12cd-efgh-EXAMPLE33333",
         },
         "requestID": "example-request-id-3",
         "eventID": "example-event-id-3",
         "readOnly": False,
         "eventType": "AwsApiCall",
         "managementEvent": True,
-        "recipientAccountId": "123456789012"
-    }
+        "recipientAccountId": "123456789012",
+    },
 }
 
 # ReplicateSecretToRegions event (AWS Service Event, not CloudTrail)
@@ -239,26 +239,17 @@ REPLICATE_SECRET_EVENT = {
         "awsRegion": "us-east-1",
         "requestParameters": {
             "secretId": "replicated-secret",
-            "addReplicaRegions": [
-                {
-                    "region": "us-west-2"
-                }
-            ]
+            "addReplicaRegions": [{"region": "us-west-2"}],
         },
         "responseElements": {
             "ARN": "arn:aws:secretsmanager:us-east-1:123456789012:secret:replicated-secret-StUvWx",
-            "replicationStatus": [
-                {
-                    "region": "us-west-2",
-                    "status": "InProgress"
-                }
-            ]
+            "replicationStatus": [{"region": "us-west-2", "status": "InProgress"}],
         },
         "requestID": "example-request-id-4",
         "eventID": "example-event-id-4",
         "eventType": "AwsServiceEvent",
-        "recipientAccountId": "123456789012"
-    }
+        "recipientAccountId": "123456789012",
+    },
 }
 
 # Event with CloudTrail ARN quirk (lowercase 'aRN' instead of 'ARN')
@@ -278,29 +269,27 @@ EVENT_WITH_ARN_QUIRK = {
             "principalId": "AIDAI23HXX2LMQ6EXAMPLE",
             "arn": "arn:aws:iam::123456789012:user/charlie",
             "accountId": "123456789012",
-            "userName": "charlie"
+            "userName": "charlie",
         },
         "eventTime": "2025-01-01T16:00:00Z",
         "eventSource": "secretsmanager.amazonaws.com",
         "eventName": "PutSecretValue",
         "awsRegion": "eu-west-1",
         "sourceIPAddress": "192.0.2.4",
-        "requestParameters": {
-            "secretId": "quirky-secret"
-        },
+        "requestParameters": {"secretId": "quirky-secret"},
         "responseElements": {
             # Note: lowercase 'aRN' instead of 'ARN' (CloudTrail quirk)
             "aRN": "arn:aws:secretsmanager:eu-west-1:123456789012:secret:quirky-secret-YzAbCd",
             "name": "quirky-secret",
-            "versionId": "d4e5f6g7-8901-23de-fghi-EXAMPLE44444"
+            "versionId": "d4e5f6g7-8901-23de-fghi-EXAMPLE44444",
         },
         "requestID": "example-request-id-5",
         "eventID": "example-event-id-5",
         "readOnly": False,
         "eventType": "AwsApiCall",
         "managementEvent": True,
-        "recipientAccountId": "123456789012"
-    }
+        "recipientAccountId": "123456789012",
+    },
 }
 
 # Invalid event - wrong source
@@ -312,9 +301,7 @@ INVALID_EVENT_WRONG_SOURCE = {
     "account": "123456789012",
     "time": "2025-01-01T17:00:00Z",
     "region": "us-east-1",
-    "detail": {
-        "eventName": "PutObject"
-    }
+    "detail": {"eventName": "PutObject"},
 }
 
 # Invalid event - missing detail
@@ -325,7 +312,7 @@ INVALID_EVENT_MISSING_DETAIL = {
     "source": "aws.secretsmanager",
     "account": "123456789012",
     "time": "2025-01-01T18:00:00Z",
-    "region": "us-east-1"
+    "region": "us-east-1",
     # Missing 'detail' field
 }
 
@@ -341,8 +328,8 @@ INVALID_EVENT_MISSING_SECRET_ID = {
     "detail": {
         "eventName": "PutSecretValue",
         "requestParameters": {},  # Missing secretId
-        "responseElements": {}    # Missing ARN
-    }
+        "responseElements": {},  # Missing ARN
+    },
 }
 
 # Invalid event - unsupported event name
@@ -356,10 +343,8 @@ INVALID_EVENT_UNSUPPORTED_NAME = {
     "region": "us-east-1",
     "detail": {
         "eventName": "DeleteSecret",  # Not a replication trigger
-        "requestParameters": {
-            "secretId": "to-be-deleted"
-        }
-    }
+        "requestParameters": {"secretId": "to-be-deleted"},
+    },
 }
 
 # Minimal valid event (bare minimum fields)
@@ -369,10 +354,5 @@ MINIMAL_VALID_EVENT = {
     "region": "us-east-1",
     "account": "123456789012",
     "time": "2025-01-01T21:00:00Z",
-    "detail": {
-        "eventName": "PutSecretValue",
-        "requestParameters": {
-            "secretId": "minimal-secret"
-        }
-    }
+    "detail": {"eventName": "PutSecretValue", "requestParameters": {"secretId": "minimal-secret"}},
 }

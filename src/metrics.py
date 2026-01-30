@@ -14,7 +14,7 @@ from logger import get_logger
 logger = get_logger()
 
 # CloudWatch namespace for all metrics
-NAMESPACE = 'SecretsReplicator'
+NAMESPACE = "SecretsReplicator"
 
 
 class MetricsPublisher:
@@ -47,9 +47,9 @@ class MetricsPublisher:
 
         if enabled:
             try:
-                self._client = boto3.client('cloudwatch')
+                self._client = boto3.client("cloudwatch")
             except Exception as e:
-                logger.warning(f'Failed to initialize CloudWatch client: {e}')
+                logger.warning(f"Failed to initialize CloudWatch client: {e}")
                 self.enabled = False
 
     def publish_replication_success(
@@ -57,8 +57,8 @@ class MetricsPublisher:
         source_region: str,
         dest_region: str,
         duration_ms: float,
-        transform_mode: str = 'sed',
-        secret_size_bytes: Optional[int] = None
+        transform_mode: str = "sed",
+        secret_size_bytes: Optional[int] = None,
     ) -> None:
         """
         Publish metrics for successful replication.
@@ -71,33 +71,35 @@ class MetricsPublisher:
             secret_size_bytes: Size of secret in bytes
         """
         dimensions = [
-            {'Name': 'SourceRegion', 'Value': source_region},
-            {'Name': 'DestRegion', 'Value': dest_region},
-            {'Name': 'TransformMode', 'Value': transform_mode}
+            {"Name": "SourceRegion", "Value": source_region},
+            {"Name": "DestRegion", "Value": dest_region},
+            {"Name": "TransformMode", "Value": transform_mode},
         ]
 
         metrics = [
             {
-                'MetricName': 'ReplicationSuccess',
-                'Value': 1,
-                'Unit': 'Count',
-                'Dimensions': dimensions
+                "MetricName": "ReplicationSuccess",
+                "Value": 1,
+                "Unit": "Count",
+                "Dimensions": dimensions,
             },
             {
-                'MetricName': 'ReplicationDuration',
-                'Value': duration_ms,
-                'Unit': 'Milliseconds',
-                'Dimensions': dimensions
-            }
+                "MetricName": "ReplicationDuration",
+                "Value": duration_ms,
+                "Unit": "Milliseconds",
+                "Dimensions": dimensions,
+            },
         ]
 
         if secret_size_bytes is not None:
-            metrics.append({
-                'MetricName': 'SecretSize',
-                'Value': secret_size_bytes,
-                'Unit': 'Bytes',
-                'Dimensions': dimensions
-            })
+            metrics.append(
+                {
+                    "MetricName": "SecretSize",
+                    "Value": secret_size_bytes,
+                    "Unit": "Bytes",
+                    "Dimensions": dimensions,
+                }
+            )
 
         self._publish_metrics(metrics)
 
@@ -106,7 +108,7 @@ class MetricsPublisher:
         source_region: str,
         dest_region: str,
         error_type: str,
-        duration_ms: Optional[float] = None
+        duration_ms: Optional[float] = None,
     ) -> None:
         """
         Publish metrics for failed replication.
@@ -118,27 +120,29 @@ class MetricsPublisher:
             duration_ms: Duration before failure (if available)
         """
         dimensions = [
-            {'Name': 'SourceRegion', 'Value': source_region},
-            {'Name': 'DestRegion', 'Value': dest_region},
-            {'Name': 'ErrorType', 'Value': error_type}
+            {"Name": "SourceRegion", "Value": source_region},
+            {"Name": "DestRegion", "Value": dest_region},
+            {"Name": "ErrorType", "Value": error_type},
         ]
 
         metrics = [
             {
-                'MetricName': 'ReplicationFailure',
-                'Value': 1,
-                'Unit': 'Count',
-                'Dimensions': dimensions
+                "MetricName": "ReplicationFailure",
+                "Value": 1,
+                "Unit": "Count",
+                "Dimensions": dimensions,
             }
         ]
 
         if duration_ms is not None:
-            metrics.append({
-                'MetricName': 'FailureDuration',
-                'Value': duration_ms,
-                'Unit': 'Milliseconds',
-                'Dimensions': dimensions
-            })
+            metrics.append(
+                {
+                    "MetricName": "FailureDuration",
+                    "Value": duration_ms,
+                    "Unit": "Milliseconds",
+                    "Dimensions": dimensions,
+                }
+            )
 
         self._publish_metrics(metrics)
 
@@ -148,7 +152,7 @@ class MetricsPublisher:
         input_size_bytes: int,
         output_size_bytes: int,
         duration_ms: float,
-        rules_count: int
+        rules_count: int,
     ) -> None:
         """
         Publish transformation performance metrics.
@@ -160,43 +164,38 @@ class MetricsPublisher:
             duration_ms: Transformation duration in milliseconds
             rules_count: Number of transformation rules applied
         """
-        dimensions = [{'Name': 'TransformMode', 'Value': mode}]
+        dimensions = [{"Name": "TransformMode", "Value": mode}]
 
         metrics = [
             {
-                'MetricName': 'TransformationDuration',
-                'Value': duration_ms,
-                'Unit': 'Milliseconds',
-                'Dimensions': dimensions
+                "MetricName": "TransformationDuration",
+                "Value": duration_ms,
+                "Unit": "Milliseconds",
+                "Dimensions": dimensions,
             },
             {
-                'MetricName': 'TransformationInputSize',
-                'Value': input_size_bytes,
-                'Unit': 'Bytes',
-                'Dimensions': dimensions
+                "MetricName": "TransformationInputSize",
+                "Value": input_size_bytes,
+                "Unit": "Bytes",
+                "Dimensions": dimensions,
             },
             {
-                'MetricName': 'TransformationOutputSize',
-                'Value': output_size_bytes,
-                'Unit': 'Bytes',
-                'Dimensions': dimensions
+                "MetricName": "TransformationOutputSize",
+                "Value": output_size_bytes,
+                "Unit": "Bytes",
+                "Dimensions": dimensions,
             },
             {
-                'MetricName': 'TransformationRulesCount',
-                'Value': rules_count,
-                'Unit': 'Count',
-                'Dimensions': dimensions
-            }
+                "MetricName": "TransformationRulesCount",
+                "Value": rules_count,
+                "Unit": "Count",
+                "Dimensions": dimensions,
+            },
         ]
 
         self._publish_metrics(metrics)
 
-    def publish_retry_metrics(
-        self,
-        operation: str,
-        attempt_number: int,
-        success: bool
-    ) -> None:
+    def publish_retry_metrics(self, operation: str, attempt_number: int, success: bool) -> None:
         """
         Publish retry attempt metrics.
 
@@ -206,32 +205,23 @@ class MetricsPublisher:
             success: Whether the retry succeeded
         """
         dimensions = [
-            {'Name': 'Operation', 'Value': operation},
-            {'Name': 'Success', 'Value': str(success)}
+            {"Name": "Operation", "Value": operation},
+            {"Name": "Success", "Value": str(success)},
         ]
 
         metrics = [
+            {"MetricName": "RetryAttempt", "Value": 1, "Unit": "Count", "Dimensions": dimensions},
             {
-                'MetricName': 'RetryAttempt',
-                'Value': 1,
-                'Unit': 'Count',
-                'Dimensions': dimensions
+                "MetricName": "RetryAttemptNumber",
+                "Value": attempt_number,
+                "Unit": "Count",
+                "Dimensions": dimensions,
             },
-            {
-                'MetricName': 'RetryAttemptNumber',
-                'Value': attempt_number,
-                'Unit': 'Count',
-                'Dimensions': dimensions
-            }
         ]
 
         self._publish_metrics(metrics)
 
-    def publish_throttling_event(
-        self,
-        operation: str,
-        region: str
-    ) -> None:
+    def publish_throttling_event(self, operation: str, region: str) -> None:
         """
         Publish throttling event metric.
 
@@ -240,17 +230,12 @@ class MetricsPublisher:
             region: AWS region where throttling occurred
         """
         dimensions = [
-            {'Name': 'Operation', 'Value': operation},
-            {'Name': 'Region', 'Value': region}
+            {"Name": "Operation", "Value": operation},
+            {"Name": "Region", "Value": region},
         ]
 
         metrics = [
-            {
-                'MetricName': 'ThrottlingEvent',
-                'Value': 1,
-                'Unit': 'Count',
-                'Dimensions': dimensions
-            }
+            {"MetricName": "ThrottlingEvent", "Value": 1, "Unit": "Count", "Dimensions": dimensions}
         ]
 
         self._publish_metrics(metrics)
@@ -266,7 +251,7 @@ class MetricsPublisher:
             metrics: List of metric data dictionaries
         """
         if not self.enabled or not self._client:
-            logger.debug('Metrics publishing is disabled')
+            logger.debug("Metrics publishing is disabled")
             return
 
         if not metrics:
@@ -276,23 +261,20 @@ class MetricsPublisher:
             # Add timestamp to all metrics
             timestamp = datetime.now(timezone.utc)
             for metric in metrics:
-                metric['Timestamp'] = timestamp
+                metric["Timestamp"] = timestamp
 
             # Publish metrics (CloudWatch allows up to 20 metrics per call)
             batch_size = 20
             for i in range(0, len(metrics), batch_size):
-                batch = metrics[i:i + batch_size]
+                batch = metrics[i : i + batch_size]
 
-                self._client.put_metric_data(
-                    Namespace=self.namespace,
-                    MetricData=batch
-                )
+                self._client.put_metric_data(Namespace=self.namespace, MetricData=batch)
 
-                logger.debug(f'Published {len(batch)} metrics to CloudWatch')
+                logger.debug(f"Published {len(batch)} metrics to CloudWatch")
 
         except Exception as e:
             # Log error but don't raise - metrics should never break main flow
-            logger.warning(f'Failed to publish metrics to CloudWatch: {e}')
+            logger.warning(f"Failed to publish metrics to CloudWatch: {e}")
 
 
 # Global metrics publisher instance

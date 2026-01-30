@@ -14,7 +14,7 @@ from tenacity import (
     wait_exponential,
     retry_if_exception_type,
     before_sleep_log,
-    after_log
+    after_log,
 )
 from logger import get_logger
 from exceptions import ThrottlingError, InternalServiceError, AWSClientError
@@ -76,8 +76,9 @@ class ExponentialBackoffWithJitter:
             ...
     """
 
-    def __init__(self, multiplier: int = 1, min: float = 2, max: float = 32,
-                 jitter_factor: float = 0.1):
+    def __init__(
+        self, multiplier: int = 1, min: float = 2, max: float = 32, jitter_factor: float = 0.1
+    ):
         """
         Initialize backoff strategy.
 
@@ -103,10 +104,7 @@ class ExponentialBackoffWithJitter:
 
 
 def with_retries(
-    max_attempts: int = 5,
-    min_wait: float = 2,
-    max_wait: float = 32,
-    jitter_factor: float = 0.1
+    max_attempts: int = 5, min_wait: float = 2, max_wait: float = 32, jitter_factor: float = 0.1
 ) -> Callable:
     """
     Decorator to add retry logic with exponential backoff and jitter.
@@ -138,23 +136,16 @@ def with_retries(
     return retry(
         # Stop after max attempts
         stop=stop_after_attempt(max_attempts),
-
         # Exponential backoff with jitter
         wait=ExponentialBackoffWithJitter(
-            multiplier=2,
-            min=min_wait,
-            max=max_wait,
-            jitter_factor=jitter_factor
+            multiplier=2, min=min_wait, max=max_wait, jitter_factor=jitter_factor
         ),
-
         # Only retry on specific exceptions
         retry=retry_if_exception_type((ThrottlingError, InternalServiceError)),
-
         # Log before sleeping
         before_sleep=before_sleep_log(logger, logging.WARNING),
-
         # Log after retry
-        after=after_log(logger, logging.INFO)
+        after=after_log(logger, logging.INFO),
     )
 
 
@@ -163,7 +154,7 @@ def with_retries_custom(
     max_attempts: int = 5,
     min_wait: float = 2,
     max_wait: float = 32,
-    jitter_factor: float = 0.1
+    jitter_factor: float = 0.1,
 ) -> Callable:
     """
     Decorator with custom retry conditions.
@@ -189,18 +180,16 @@ def with_retries_custom(
     return retry(
         stop=stop_after_attempt(max_attempts),
         wait=ExponentialBackoffWithJitter(
-            multiplier=2,
-            min=min_wait,
-            max=max_wait,
-            jitter_factor=jitter_factor
+            multiplier=2, min=min_wait, max=max_wait, jitter_factor=jitter_factor
         ),
         retry=retry_if_exception_type(retry_on),
         before_sleep=before_sleep_log(logger, logging.WARNING),
-        after=after_log(logger, logging.INFO)
+        after=after_log(logger, logging.INFO),
     )
 
 
 # Convenience decorators for common scenarios
+
 
 def retry_on_throttle(func: Callable) -> Callable:
     """
@@ -213,10 +202,7 @@ def retry_on_throttle(func: Callable) -> Callable:
         def get_secret(client, secret_id):
             return client.get_secret(secret_id)
     """
-    return with_retries_custom(
-        retry_on=(ThrottlingError,),
-        max_attempts=5
-    )(func)
+    return with_retries_custom(retry_on=(ThrottlingError,), max_attempts=5)(func)
 
 
 def retry_on_transient_errors(func: Callable) -> Callable:
@@ -251,7 +237,7 @@ def get_retry_stats(retry_state) -> dict:
         }
     """
     return {
-        'attempt_number': retry_state.attempt_number,
-        'idle_for': getattr(retry_state, 'idle_for', 0),
-        'next_action': str(getattr(retry_state, 'next_action', None))
+        "attempt_number": retry_state.attempt_number,
+        "idle_for": getattr(retry_state, "idle_for", 0),
+        "next_action": str(getattr(retry_state, "next_action", None)),
     }

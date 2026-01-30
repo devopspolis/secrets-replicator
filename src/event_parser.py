@@ -13,23 +13,25 @@ from datetime import datetime, timezone
 
 class EventParsingError(Exception):
     """Raised when event parsing fails"""
+
     pass
 
 
 @dataclass
 class SecretEvent:
     """Represents a parsed Secrets Manager event"""
-    event_name: str              # PutSecretValue, UpdateSecret, etc.
-    secret_id: str               # Secret ARN or name
-    secret_arn: Optional[str]    # Full ARN if available
-    version_id: Optional[str]    # Secret version ID
-    region: str                  # AWS region
-    account_id: str              # AWS account ID
-    event_time: datetime         # When the event occurred
-    user_identity: Optional[str] # Who triggered the event
-    source_ip: Optional[str]     # Source IP address
+
+    event_name: str  # PutSecretValue, UpdateSecret, etc.
+    secret_id: str  # Secret ARN or name
+    secret_arn: Optional[str]  # Full ARN if available
+    version_id: Optional[str]  # Secret version ID
+    region: str  # AWS region
+    account_id: str  # AWS account ID
+    event_time: datetime  # When the event occurred
+    user_identity: Optional[str]  # Who triggered the event
+    source_ip: Optional[str]  # Source IP address
     request_parameters: Dict[str, Any]  # Full request parameters
-    response_elements: Dict[str, Any]   # Full response elements
+    response_elements: Dict[str, Any]  # Full response elements
 
 
 def parse_eventbridge_event(event: Dict[str, Any]) -> SecretEvent:
@@ -96,52 +98,50 @@ def parse_eventbridge_event(event: Dict[str, Any]) -> SecretEvent:
         raise EventParsingError("Event must be a dictionary")
 
     # Check source
-    source = event.get('source', '')
-    if source != 'aws.secretsmanager':
-        raise EventParsingError(
-            f"Invalid event source: '{source}' (expected 'aws.secretsmanager')"
-        )
+    source = event.get("source", "")
+    if source != "aws.secretsmanager":
+        raise EventParsingError(f"Invalid event source: '{source}' (expected 'aws.secretsmanager')")
 
     # Check detail-type
-    detail_type = event.get('detail-type', '')
-    valid_detail_types = ['AWS API Call via CloudTrail', 'AWS Service Event']
+    detail_type = event.get("detail-type", "")
+    valid_detail_types = ["AWS API Call via CloudTrail", "AWS Service Event"]
     if detail_type not in valid_detail_types:
         raise EventParsingError(
             f"Invalid detail-type: '{detail_type}' (expected one of {valid_detail_types})"
         )
 
     # Extract top-level fields
-    region = event.get('region', '')
+    region = event.get("region", "")
     if not region:
         raise EventParsingError("Missing required field: 'region'")
 
-    account_id = event.get('account', '')
+    account_id = event.get("account", "")
     if not account_id:
         raise EventParsingError("Missing required field: 'account'")
 
-    event_time_str = event.get('time', '')
+    event_time_str = event.get("time", "")
     try:
-        event_time = datetime.fromisoformat(event_time_str.replace('Z', '+00:00'))
+        event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         raise EventParsingError(f"Invalid event time format: '{event_time_str}'")
 
     # Extract detail
-    detail = event.get('detail', {})
+    detail = event.get("detail", {})
     if not isinstance(detail, dict):
         raise EventParsingError("Missing or invalid 'detail' field")
 
     # Extract event name
-    event_name = detail.get('eventName', '')
+    event_name = detail.get("eventName", "")
     if not event_name:
         raise EventParsingError("Missing required field: 'detail.eventName'")
 
     # Validate event name
     valid_event_names = [
-        'PutSecretValue',
-        'UpdateSecret',
-        'ReplicateSecretToRegions',
-        'ReplicateSecretVersion',
-        'CreateSecret'
+        "PutSecretValue",
+        "UpdateSecret",
+        "ReplicateSecretToRegions",
+        "ReplicateSecretVersion",
+        "CreateSecret",
     ]
     if event_name not in valid_event_names:
         raise EventParsingError(
@@ -149,22 +149,22 @@ def parse_eventbridge_event(event: Dict[str, Any]) -> SecretEvent:
         )
 
     # Extract request parameters
-    request_parameters = detail.get('requestParameters', {})
+    request_parameters = detail.get("requestParameters", {})
     if not isinstance(request_parameters, dict):
         request_parameters = {}
 
     # Extract response elements
-    response_elements = detail.get('responseElements', {})
+    response_elements = detail.get("responseElements", {})
     if not isinstance(response_elements, dict):
         response_elements = {}
 
     # Extract secret ID (can be in multiple places)
     # Priority: requestParameters.secretId, requestParameters.name, responseElements.ARN
     secret_id = (
-        request_parameters.get('secretId') or
-        request_parameters.get('name') or
-        response_elements.get('ARN') or
-        response_elements.get('aRN')  # CloudTrail quirk
+        request_parameters.get("secretId")
+        or request_parameters.get("name")
+        or response_elements.get("ARN")
+        or response_elements.get("aRN")  # CloudTrail quirk
     )
 
     if not secret_id:
@@ -174,31 +174,31 @@ def parse_eventbridge_event(event: Dict[str, Any]) -> SecretEvent:
 
     # Extract secret ARN (may be in response)
     secret_arn = (
-        response_elements.get('ARN') or
-        response_elements.get('aRN') or  # CloudTrail quirk
-        (secret_id if secret_id.startswith('arn:') else None)
+        response_elements.get("ARN")
+        or response_elements.get("aRN")  # CloudTrail quirk
+        or (secret_id if secret_id.startswith("arn:") else None)
     )
 
     # Extract version ID
     version_id = (
-        response_elements.get('versionId') or
-        response_elements.get('VersionId') or
-        request_parameters.get('versionId')
+        response_elements.get("versionId")
+        or response_elements.get("VersionId")
+        or request_parameters.get("versionId")
     )
 
     # Extract user identity
-    user_identity_dict = detail.get('userIdentity', {})
+    user_identity_dict = detail.get("userIdentity", {})
     if isinstance(user_identity_dict, dict):
         user_identity = (
-            user_identity_dict.get('principalId') or
-            user_identity_dict.get('arn') or
-            user_identity_dict.get('type')
+            user_identity_dict.get("principalId")
+            or user_identity_dict.get("arn")
+            or user_identity_dict.get("type")
         )
     else:
         user_identity = None
 
     # Extract source IP
-    source_ip = detail.get('sourceIPAddress')
+    source_ip = detail.get("sourceIPAddress")
 
     return SecretEvent(
         event_name=event_name,
@@ -211,7 +211,7 @@ def parse_eventbridge_event(event: Dict[str, Any]) -> SecretEvent:
         user_identity=user_identity,
         source_ip=source_ip,
         request_parameters=request_parameters,
-        response_elements=response_elements
+        response_elements=response_elements,
     )
 
 
@@ -248,11 +248,7 @@ def validate_event_for_replication(event: SecretEvent) -> bool:
         True
     """
     # Check event name
-    replication_trigger_events = [
-        'PutSecretValue',
-        'UpdateSecret',
-        'CreateSecret'
-    ]
+    replication_trigger_events = ["PutSecretValue", "UpdateSecret", "CreateSecret"]
 
     if event.event_name not in replication_trigger_events:
         return False
@@ -285,22 +281,22 @@ def extract_secret_name_from_arn(arn: str) -> Optional[str]:
         >>> extract_secret_name_from_arn('invalid')
         None
     """
-    if not arn or not arn.startswith('arn:'):
+    if not arn or not arn.startswith("arn:"):
         return None
 
     try:
-        parts = arn.split(':')
+        parts = arn.split(":")
         if len(parts) < 7:
             return None
 
         # Secret name is in parts[6] and onwards
-        secret_part = ':'.join(parts[6:])
+        secret_part = ":".join(parts[6:])
 
         # Remove the 6-character suffix that AWS adds
         # Format: secret-name-XXXXXX where X is alphanumeric
-        if '-' in secret_part:
+        if "-" in secret_part:
             # Split and check if last part is 6 characters (likely suffix)
-            name_parts = secret_part.rsplit('-', 1)
+            name_parts = secret_part.rsplit("-", 1)
             if len(name_parts) == 2 and len(name_parts[1]) == 6:
                 return name_parts[0]
 
@@ -313,6 +309,7 @@ def extract_secret_name_from_arn(arn: str) -> Optional[str]:
 # =============================================================================
 # Manual Trigger Event Support
 # =============================================================================
+
 
 def is_manual_trigger(event: Dict[str, Any]) -> bool:
     """
@@ -346,10 +343,10 @@ def is_manual_trigger(event: Dict[str, Any]) -> bool:
     if not isinstance(event, dict):
         return False
 
-    return event.get('source') == 'manual'
+    return event.get("source") == "manual"
 
 
-def parse_manual_event(event: Dict[str, Any], account_id: str = '') -> List[SecretEvent]:
+def parse_manual_event(event: Dict[str, Any], account_id: str = "") -> List[SecretEvent]:
     """
     Parse a manual trigger event into a list of SecretEvent objects.
 
@@ -382,17 +379,17 @@ def parse_manual_event(event: Dict[str, Any], account_id: str = '') -> List[Secr
     # Extract secret IDs - support both singular and plural forms
     secret_ids = []
 
-    if 'secretId' in event:
+    if "secretId" in event:
         # Single secret
-        secret_id = event['secretId']
+        secret_id = event["secretId"]
         if isinstance(secret_id, str) and secret_id.strip():
             secret_ids.append(secret_id.strip())
         else:
             raise EventParsingError("'secretId' must be a non-empty string")
 
-    if 'secretIds' in event:
+    if "secretIds" in event:
         # Multiple secrets
-        ids = event['secretIds']
+        ids = event["secretIds"]
         if isinstance(ids, list):
             for sid in ids:
                 if isinstance(sid, str) and sid.strip():
@@ -414,16 +411,16 @@ def parse_manual_event(event: Dict[str, Any], account_id: str = '') -> List[Secr
             unique_secret_ids.append(sid)
 
     # Extract region - use event value, env var, or default
-    region = event.get('region', '')
+    region = event.get("region", "")
     if not region:
-        region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', ''))
+        region = os.environ.get("AWS_REGION", os.environ.get("AWS_DEFAULT_REGION", ""))
     if not region:
         raise EventParsingError(
             "Region required: provide 'region' in event or set AWS_REGION environment variable"
         )
 
     # Extract account ID - use event value or passed parameter
-    event_account_id = event.get('accountId', '') or account_id
+    event_account_id = event.get("accountId", "") or account_id
     # Account ID is optional for manual events - will be populated later if needed
 
     # Current time for event
@@ -433,21 +430,23 @@ def parse_manual_event(event: Dict[str, Any], account_id: str = '') -> List[Secr
     events = []
     for secret_id in unique_secret_ids:
         # Determine if secret_id is an ARN
-        secret_arn = secret_id if secret_id.startswith('arn:') else None
+        secret_arn = secret_id if secret_id.startswith("arn:") else None
 
-        events.append(SecretEvent(
-            event_name='ManualSync',
-            secret_id=secret_id,
-            secret_arn=secret_arn,
-            version_id=None,
-            region=region,
-            account_id=event_account_id,
-            event_time=now,
-            user_identity='manual-trigger',
-            source_ip=None,
-            request_parameters={'secretId': secret_id, 'manual': True},
-            response_elements={}
-        ))
+        events.append(
+            SecretEvent(
+                event_name="ManualSync",
+                secret_id=secret_id,
+                secret_arn=secret_arn,
+                version_id=None,
+                region=region,
+                account_id=event_account_id,
+                event_time=now,
+                user_identity="manual-trigger",
+                source_ip=None,
+                request_parameters={"secretId": secret_id, "manual": True},
+                response_elements={},
+            )
+        )
 
     return events
 
@@ -483,7 +482,7 @@ def validate_manual_event_for_replication(event: SecretEvent) -> bool:
         True
     """
     # Check it's actually a manual event
-    if event.event_name != 'ManualSync':
+    if event.event_name != "ManualSync":
         return False
 
     # Check required fields

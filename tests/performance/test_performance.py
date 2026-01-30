@@ -13,7 +13,12 @@ import time
 import statistics
 import pytest
 from src.handler import lambda_handler
-from src.transformer import apply_sed_transforms, parse_sedfile, apply_json_transforms, parse_json_mapping
+from src.transformer import (
+    apply_sed_transforms,
+    parse_sedfile,
+    apply_json_transforms,
+    parse_json_mapping,
+)
 from tests.fixtures.eventbridge_events import create_test_event
 
 
@@ -23,26 +28,22 @@ class TestReplicationPerformance:
     """Performance tests for end-to-end replication."""
 
     @pytest.mark.parametrize("secret_size_kb", [1, 10, 32, 60])
-    def test_replication_by_size(
-        self,
-        secret_helper,
-        aws_region,
-        account_id,
-        secret_size_kb
-    ):
+    def test_replication_by_size(self, secret_helper, aws_region, account_id, secret_size_kb):
         """Test replication performance for different secret sizes."""
         # Create secret of specified size
         secret_value = "x" * (secret_size_kb * 1024)
         source = secret_helper.create_secret(value=secret_value)
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "INFO",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "INFO",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -76,12 +77,7 @@ class TestReplicationPerformance:
         secret_helper.delete_secret(dest_name, force=True)
 
     @pytest.mark.slow
-    def test_concurrent_replications(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_concurrent_replications(self, secret_helper, aws_region, account_id):
         """Test performance with concurrent replications."""
         num_secrets = 10
         sources = []
@@ -92,12 +88,14 @@ class TestReplicationPerformance:
             source = secret_helper.create_secret(value=value)
             sources.append(source)
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "INFO",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "INFO",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Measure time for sequential processing
         start = time.time()
@@ -151,9 +149,7 @@ class TestTransformationPerformance:
     def test_sed_transformation_performance(self, num_rules):
         """Test sed transformation performance with varying rule counts."""
         # Generate rules
-        sedfile_content = "\n".join([
-            f"s/pattern{i}/replacement{i}/g" for i in range(num_rules)
-        ])
+        sedfile_content = "\n".join([f"s/pattern{i}/replacement{i}/g" for i in range(num_rules)])
         rules = parse_sedfile(sedfile_content)
 
         # Create test secret
@@ -205,29 +201,33 @@ s/db-prod/db-qa/g
     def test_json_transformation_performance(self):
         """Test JSON transformation performance."""
         # Create test JSON secret
-        secret_value = json.dumps({
-            "environment": "development",
-            "region": "us-east-1",
-            "database": {
-                "host": "db-dev.us-east-1.rds.amazonaws.com",
-                "port": 5432,
-                "replicas": ["replica1.us-east-1", "replica2.us-east-1"]
-            },
-            "cache": {
-                "redis": "redis-dev.us-east-1.cache.amazonaws.com",
-                "memcached": "memcached-dev.us-east-1.cache.amazonaws.com"
+        secret_value = json.dumps(
+            {
+                "environment": "development",
+                "region": "us-east-1",
+                "database": {
+                    "host": "db-dev.us-east-1.rds.amazonaws.com",
+                    "port": 5432,
+                    "replicas": ["replica1.us-east-1", "replica2.us-east-1"],
+                },
+                "cache": {
+                    "redis": "redis-dev.us-east-1.cache.amazonaws.com",
+                    "memcached": "memcached-dev.us-east-1.cache.amazonaws.com",
+                },
             }
-        })
+        )
 
         # Create JSON mapping
-        mapping_content = json.dumps({
-            "transformations": [
-                {"path": "$.environment", "find": "development", "replace": "production"},
-                {"path": "$.region", "find": "us-east-1", "replace": "us-west-2"},
-                {"path": "$.database.host", "find": "us-east-1", "replace": "us-west-2"},
-                {"path": "$.cache.redis", "find": "us-east-1", "replace": "us-west-2"},
-            ]
-        })
+        mapping_content = json.dumps(
+            {
+                "transformations": [
+                    {"path": "$.environment", "find": "development", "replace": "production"},
+                    {"path": "$.region", "find": "us-east-1", "replace": "us-west-2"},
+                    {"path": "$.database.host", "find": "us-east-1", "replace": "us-west-2"},
+                    {"path": "$.cache.redis", "find": "us-east-1", "replace": "us-west-2"},
+                ]
+            }
+        )
         mappings = parse_json_mapping(mapping_content)
 
         # Measure transformation time
@@ -257,12 +257,14 @@ s/[a-z]+-[a-z]+-[0-9][a-z]?/us-west-2a/g
         rules = parse_sedfile(sedfile_content)
 
         # Create test secret with ARNs and URLs
-        secret_value = json.dumps({
-            "db_arn": "arn:aws:rds:us-east-1:123456789012:db/mydb",
-            "s3_arn": "arn:aws:s3:us-east-1:123456789012:bucket/mybucket",
-            "api_url": "https://api.us-east-1.amazonaws.com",
-            "az": "us-east-1a"
-        })
+        secret_value = json.dumps(
+            {
+                "db_arn": "arn:aws:rds:us-east-1:123456789012:db/mydb",
+                "s3_arn": "arn:aws:s3:us-east-1:123456789012:bucket/mybucket",
+                "api_url": "https://api.us-east-1.amazonaws.com",
+                "az": "us-east-1a",
+            }
+        )
 
         # Measure transformation time
         iterations = 100
@@ -305,7 +307,7 @@ class TestMemoryUsage:
         snapshot2 = tracemalloc.take_snapshot()
 
         # Calculate memory difference
-        top_stats = snapshot2.compare_to(snapshot1, 'lineno')
+        top_stats = snapshot2.compare_to(snapshot1, "lineno")
         total_memory = sum(stat.size_diff for stat in top_stats)
 
         print(f"\\nMemory usage for 60KB secret transformation:")
@@ -324,25 +326,22 @@ class TestCrossRegionPerformance:
     """Performance tests for cross-region replication."""
 
     def test_cross_region_latency(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Measure cross-region replication latency."""
         # Create source secret
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "INFO",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "INFO",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",

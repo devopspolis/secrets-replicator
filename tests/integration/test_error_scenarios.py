@@ -18,23 +18,22 @@ from tests.fixtures.eventbridge_events import create_test_event
 class TestErrorScenarios:
     """Test error handling in various failure scenarios."""
 
-    def test_source_secret_not_found(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_source_secret_not_found(self, secret_helper, aws_region, account_id):
         """Test handling of non-existent source secret."""
         # Use a non-existent secret ARN
-        fake_arn = f"arn:aws:secretsmanager:{aws_region}:{account_id}:secret:nonexistent-secret-XXXXXX"
+        fake_arn = (
+            f"arn:aws:secretsmanager:{aws_region}:{account_id}:secret:nonexistent-secret-XXXXXX"
+        )
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": "test-dest-nonexistent",
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": "test-dest-nonexistent",
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event for non-existent secret
         event = create_test_event(
@@ -53,12 +52,7 @@ class TestErrorScenarios:
         assert "error" in body
         assert "not found" in body["error"].lower()
 
-    def test_binary_secret_not_supported(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_binary_secret_not_supported(self, secret_helper, aws_region, account_id):
         """Test handling of binary secrets (not supported)."""
         # Note: Creating binary secrets via boto3 is more complex
         # This test documents the expected behavior
@@ -68,13 +62,15 @@ class TestErrorScenarios:
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -91,12 +87,7 @@ class TestErrorScenarios:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_secret_too_large(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_secret_too_large(self, secret_helper, aws_region, account_id):
         """Test handling of secrets exceeding size limit."""
         # Create a very large secret (65KB - exceeds default 64KB limit)
         large_value = "x" * (65 * 1024)
@@ -106,14 +97,16 @@ class TestErrorScenarios:
             source = secret_helper.create_secret(value=large_value)
             dest_name = f"test-dest-{source['Name']}"
 
-            os.environ.update({
-                "DESTINATION_REGION": aws_region,
-                "DESTINATION_SECRET_NAME": dest_name,
-                "TRANSFORM_MODE": "sed",
-                "LOG_LEVEL": "DEBUG",
-                "ENABLE_METRICS": "false",
-                "MAX_SECRET_SIZE": "64000",  # 64KB limit
-            })
+            os.environ.update(
+                {
+                    "DESTINATION_REGION": aws_region,
+                    "DESTINATION_SECRET_NAME": dest_name,
+                    "TRANSFORM_MODE": "sed",
+                    "LOG_LEVEL": "DEBUG",
+                    "ENABLE_METRICS": "false",
+                    "MAX_SECRET_SIZE": "64000",  # 64KB limit
+                }
+            )
 
             event = create_test_event(
                 event_name="PutSecretValue",
@@ -138,19 +131,17 @@ class TestErrorScenarios:
             print(f"Expected error creating large secret: {e}")
             assert "secret size" in str(e).lower() or "too large" in str(e).lower()
 
-    def test_invalid_event_format(
-        self,
-        aws_region,
-        account_id
-    ):
+    def test_invalid_event_format(self, aws_region, account_id):
         """Test handling of malformed events."""
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": "test-dest",
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": "test-dest",
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Invalid event - missing required fields
         invalid_event = {
@@ -166,23 +157,20 @@ class TestErrorScenarios:
         body = json.loads(result["body"])
         assert "error" in body
 
-    def test_unsupported_event_type(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_unsupported_event_type(self, secret_helper, aws_region, account_id):
         """Test handling of unsupported event types."""
         # Create a secret
         source = secret_helper.create_secret()
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": f"test-dest-{source['Name']}",
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": f"test-dest-{source['Name']}",
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create event with unsupported event name (e.g., DeleteSecret)
         event = create_test_event(
@@ -198,12 +186,7 @@ class TestErrorScenarios:
         # Should handle gracefully (either skip or error)
         assert result["statusCode"] in [200, 400]
 
-    def test_missing_configuration(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_missing_configuration(self, secret_helper, aws_region, account_id):
         """Test handling of missing required configuration."""
         source = secret_helper.create_secret()
 
@@ -233,23 +216,20 @@ class TestErrorScenarios:
             # Restore environment
             os.environ.update(env_backup)
 
-    def test_invalid_transform_mode(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_invalid_transform_mode(self, secret_helper, aws_region, account_id):
         """Test handling of invalid transform mode."""
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "invalid_mode",  # Invalid
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "invalid_mode",  # Invalid
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -267,25 +247,22 @@ class TestErrorScenarios:
         assert "error" in body
 
     @pytest.mark.slow
-    def test_timeout_handling(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_timeout_handling(self, secret_helper, aws_region, account_id):
         """Test handling of operations that might timeout."""
         # Create a normal secret
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-            "OPERATION_TIMEOUT": "1",  # Very short timeout (if implemented)
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+                "OPERATION_TIMEOUT": "1",  # Very short timeout (if implemented)
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -306,12 +283,7 @@ class TestErrorScenarios:
         if dest_secret:
             secret_helper.delete_secret(dest_name, force=True)
 
-    def test_invalid_sedfile_syntax(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_invalid_sedfile_syntax(self, secret_helper, aws_region, account_id):
         """Test handling of invalid sedfile syntax."""
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
@@ -322,14 +294,16 @@ class TestErrorScenarios:
             f.write("s/invalid syntax without closing delimiter\n")
 
         try:
-            os.environ.update({
-                "DESTINATION_REGION": aws_region,
-                "DESTINATION_SECRET_NAME": dest_name,
-                "TRANSFORM_MODE": "sed",
-                "LOG_LEVEL": "DEBUG",
-                "ENABLE_METRICS": "false",
-                # Would need to configure sedfile path
-            })
+            os.environ.update(
+                {
+                    "DESTINATION_REGION": aws_region,
+                    "DESTINATION_SECRET_NAME": dest_name,
+                    "TRANSFORM_MODE": "sed",
+                    "LOG_LEVEL": "DEBUG",
+                    "ENABLE_METRICS": "false",
+                    # Would need to configure sedfile path
+                }
+            )
 
             event = create_test_event(
                 event_name="PutSecretValue",
@@ -354,12 +328,7 @@ class TestErrorScenarios:
             if os.path.exists(invalid_sedfile):
                 os.remove(invalid_sedfile)
 
-    def test_network_error_retry(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_network_error_retry(self, secret_helper, aws_region, account_id):
         """Test retry behavior on transient network errors."""
         # This test verifies that the retry logic is in place
         # Actual network errors are hard to simulate in integration tests
@@ -367,13 +336,15 @@ class TestErrorScenarios:
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",

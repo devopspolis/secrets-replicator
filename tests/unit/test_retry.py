@@ -13,14 +13,14 @@ from retry import (
     with_retries_custom,
     retry_on_throttle,
     retry_on_transient_errors,
-    ExponentialBackoffWithJitter
+    ExponentialBackoffWithJitter,
 )
 from exceptions import (
     ThrottlingError,
     InternalServiceError,
     SecretNotFoundError,
     AccessDeniedError,
-    AWSClientError
+    AWSClientError,
 )
 
 
@@ -150,11 +150,13 @@ class TestWithRetries:
 
     def test_retries_on_throttling_error(self):
         """Test that throttling errors trigger retries"""
-        mock_func = Mock(side_effect=[
-            ThrottlingError("Rate exceeded"),
-            ThrottlingError("Rate exceeded"),
-            "success"
-        ])
+        mock_func = Mock(
+            side_effect=[
+                ThrottlingError("Rate exceeded"),
+                ThrottlingError("Rate exceeded"),
+                "success",
+            ]
+        )
         decorated = with_retries(max_attempts=5, min_wait=0.01, max_wait=0.1)(mock_func)
 
         result = decorated()
@@ -164,10 +166,7 @@ class TestWithRetries:
 
     def test_retries_on_internal_service_error(self):
         """Test that internal service errors trigger retries"""
-        mock_func = Mock(side_effect=[
-            InternalServiceError("Internal error"),
-            "success"
-        ])
+        mock_func = Mock(side_effect=[InternalServiceError("Internal error"), "success"])
         decorated = with_retries(max_attempts=3, min_wait=0.01, max_wait=0.1)(mock_func)
 
         result = decorated()
@@ -204,7 +203,9 @@ class TestWithRetries:
             call_times.append(time.time())
             raise ThrottlingError("Rate exceeded")
 
-        decorated = with_retries(max_attempts=3, min_wait=0.1, max_wait=1, jitter_factor=0)(failing_func)
+        decorated = with_retries(max_attempts=3, min_wait=0.1, max_wait=1, jitter_factor=0)(
+            failing_func
+        )
 
         with pytest.raises(RetryError):
             decorated()
@@ -222,15 +223,9 @@ class TestWithRetriesCustom:
 
     def test_custom_exception_types(self):
         """Test retry with custom exception types"""
-        mock_func = Mock(side_effect=[
-            ValueError("Error"),
-            "success"
-        ])
+        mock_func = Mock(side_effect=[ValueError("Error"), "success"])
         decorated = with_retries_custom(
-            retry_on=(ValueError,),
-            max_attempts=3,
-            min_wait=0.01,
-            max_wait=0.1
+            retry_on=(ValueError,), max_attempts=3, min_wait=0.01, max_wait=0.1
         )(mock_func)
 
         result = decorated()
@@ -241,10 +236,7 @@ class TestWithRetriesCustom:
     def test_does_not_retry_unlisted_exceptions(self):
         """Test that unlisted exceptions are not retried"""
         mock_func = Mock(side_effect=RuntimeError("Error"))
-        decorated = with_retries_custom(
-            retry_on=(ValueError,),
-            max_attempts=3
-        )(mock_func)
+        decorated = with_retries_custom(retry_on=(ValueError,), max_attempts=3)(mock_func)
 
         with pytest.raises(RuntimeError):
             decorated()
@@ -257,21 +249,18 @@ class TestRetryOnThrottle:
 
     def test_retries_throttling_only(self):
         """Test that only throttling errors are retried"""
-        mock_func = Mock(side_effect=[
-            ThrottlingError("Rate exceeded"),
-            "success"
-        ])
+        mock_func = Mock(side_effect=[ThrottlingError("Rate exceeded"), "success"])
         decorated = retry_on_throttle(mock_func)
 
         # Patch to speed up test
-        with patch('retry.with_retries_custom') as mock_decorator:
+        with patch("retry.with_retries_custom") as mock_decorator:
             mock_decorator.return_value = lambda f: f
             decorated = retry_on_throttle(mock_func)
 
             # Verify decorator was called with correct args
             mock_decorator.assert_called_once()
             call_args = mock_decorator.call_args[1]
-            assert call_args['retry_on'] == (ThrottlingError,)
+            assert call_args["retry_on"] == (ThrottlingError,)
 
     def test_does_not_retry_other_errors(self):
         """Test that non-throttling errors are not retried"""
@@ -286,7 +275,7 @@ class TestRetryOnTransientErrors:
         """Test that default configuration is used"""
         mock_func = Mock(return_value="success")
 
-        with patch('retry.with_retries') as mock_with_retries:
+        with patch("retry.with_retries") as mock_with_retries:
             mock_with_retries.return_value = lambda f: f
             decorated = retry_on_transient_errors(mock_func)
 
@@ -299,19 +288,19 @@ class TestIntegration:
 
     def test_realistic_throttling_scenario(self):
         """Test realistic scenario with multiple throttling errors"""
-        call_count = {'count': 0}
+        call_count = {"count": 0}
 
         @with_retries(max_attempts=5, min_wait=0.01, max_wait=0.1)
         def flaky_operation():
-            call_count['count'] += 1
-            if call_count['count'] < 4:
+            call_count["count"] += 1
+            if call_count["count"] < 4:
                 raise ThrottlingError("Rate exceeded")
             return "success"
 
         result = flaky_operation()
 
         assert result == "success"
-        assert call_count['count'] == 4
+        assert call_count["count"] == 4
 
     def test_mixed_error_types(self):
         """Test handling of different error types"""
@@ -320,20 +309,20 @@ class TestIntegration:
             InternalServiceError("Internal"),
             ThrottlingError("Throttled again"),
         ]
-        call_count = {'index': 0}
+        call_count = {"index": 0}
 
         @with_retries(max_attempts=10, min_wait=0.01, max_wait=0.1)
         def mixed_errors():
-            if call_count['index'] < len(errors):
-                error = errors[call_count['index']]
-                call_count['index'] += 1
+            if call_count["index"] < len(errors):
+                error = errors[call_count["index"]]
+                call_count["index"] += 1
                 raise error
             return "success"
 
         result = mixed_errors()
 
         assert result == "success"
-        assert call_count['index'] == 3  # All three errors, then success
+        assert call_count["index"] == 3  # All three errors, then success
 
 
 class TestEdgeCases:

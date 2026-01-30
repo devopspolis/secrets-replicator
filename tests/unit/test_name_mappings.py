@@ -16,7 +16,8 @@ from botocore.exceptions import ClientError
 
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src')))
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../src")))
 
 from name_mappings import (
     _match_pattern,
@@ -24,7 +25,7 @@ from name_mappings import (
     get_destination_name,
     load_name_mappings,
     get_cached_mappings,
-    clear_mapping_cache
+    clear_mapping_cache,
 )
 from config import DestinationConfig
 
@@ -132,7 +133,9 @@ class TestApplyPatternMapping:
 
     def test_multiple_wildcards_transformation(self):
         """Multiple wildcards should replace in order."""
-        result = _apply_pattern_mapping("app/team1/prod/db", "app/*/prod/*", "new-app/*/production/*")
+        result = _apply_pattern_mapping(
+            "app/team1/prod/db", "app/*/prod/*", "new-app/*/production/*"
+        )
         assert result == "new-app/team1/production/db"
 
         result = _apply_pattern_mapping("a/b/c/d", "*/b/*", "*/x/*")
@@ -149,9 +152,7 @@ class TestApplyPatternMapping:
     def test_complex_transformation(self):
         """Complex multi-wildcard transformation."""
         result = _apply_pattern_mapping(
-            "dev/us-east-1/app/config",
-            "dev/*/app/*",
-            "prod/*/application/*"
+            "dev/us-east-1/app/config", "dev/*/app/*", "prod/*/application/*"
         )
         assert result == "prod/us-east-1/application/config"
 
@@ -165,10 +166,7 @@ class TestGetDestinationName:
 
     def test_no_secret_names_configured(self):
         """When secret_names not configured, return source name."""
-        destination = DestinationConfig(
-            region="us-west-2",
-            secret_names=None
-        )
+        destination = DestinationConfig(region="us-west-2", secret_names=None)
         client = MagicMock()
 
         result = get_destination_name("app/prod/db", destination, client)
@@ -178,16 +176,13 @@ class TestGetDestinationName:
     def test_exact_match_priority(self):
         """Exact matches should take priority over patterns."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
         client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "app/prod/db": "exact-match-name",
-                "app/*": "pattern-match-name/*"
-            })
+            secret_string=json.dumps(
+                {"app/prod/db": "exact-match-name", "app/*": "pattern-match-name/*"}
+            )
         )
 
         result = get_destination_name("app/prod/db", destination, client)
@@ -196,16 +191,11 @@ class TestGetDestinationName:
     def test_pattern_match_when_no_exact_match(self):
         """Pattern should match when no exact match exists."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
         client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "other-secret": "other-dest",
-                "app/*": "my-app/*"
-            })
+            secret_string=json.dumps({"other-secret": "other-dest", "app/*": "my-app/*"})
         )
 
         result = get_destination_name("app/prod/db", destination, client)
@@ -214,18 +204,14 @@ class TestGetDestinationName:
     def test_multiple_patterns_first_match_wins(self):
         """When multiple patterns match, first one wins."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
         # Note: dict order in Python 3.7+ is insertion order
         client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "app/*": "first-match/*",
-                "app/prod/*": "second-match/*",
-                "*": "catch-all/*"
-            })
+            secret_string=json.dumps(
+                {"app/*": "first-match/*", "app/prod/*": "second-match/*", "*": "catch-all/*"}
+            )
         )
 
         result = get_destination_name("app/prod/db", destination, client)
@@ -236,16 +222,11 @@ class TestGetDestinationName:
     def test_no_match_returns_none(self):
         """When no mapping matches, return None (filtering behavior)."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
         client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "other-secret": "other-dest",
-                "app/*": "my-app/*"
-            })
+            secret_string=json.dumps({"other-secret": "other-dest", "app/*": "my-app/*"})
         )
 
         result = get_destination_name("database/prod/config", destination, client)
@@ -254,16 +235,10 @@ class TestGetDestinationName:
     def test_catch_all_wildcard(self):
         """Single wildcard * should match everything."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
-        client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "*": "prefix/*"
-            })
-        )
+        client.get_secret.return_value = Mock(secret_string=json.dumps({"*": "prefix/*"}))
 
         result = get_destination_name("any/secret/name", destination, client)
         assert result == "prefix/any/secret/name"
@@ -271,9 +246,7 @@ class TestGetDestinationName:
     def test_empty_mappings_returns_none(self):
         """Empty mapping secret should return None (no patterns to match)."""
         destination = DestinationConfig(
-            region="us-west-2",
-            secret_names="test-mappings",
-            secret_names_cache_ttl=300
+            region="us-west-2", secret_names="test-mappings", secret_names_cache_ttl=300
         )
         client = MagicMock()
         client.get_secret.return_value = Mock(secret_string=json.dumps({}))
@@ -289,10 +262,7 @@ class TestLoadNameMappings:
         """Load mappings from a single secret."""
         client = MagicMock()
         client.get_secret.return_value = Mock(
-            secret_string=json.dumps({
-                "source1": "dest1",
-                "source2": "dest2"
-            })
+            secret_string=json.dumps({"source1": "dest1", "source2": "dest2"})
         )
 
         result = load_name_mappings("mapping1", client)
@@ -304,7 +274,7 @@ class TestLoadNameMappings:
         client = MagicMock()
         client.get_secret.side_effect = [
             Mock(secret_string=json.dumps({"source1": "dest1"})),
-            Mock(secret_string=json.dumps({"source2": "dest2"}))
+            Mock(secret_string=json.dumps({"source2": "dest2"})),
         ]
 
         result = load_name_mappings("mapping1,mapping2", client)
@@ -316,7 +286,7 @@ class TestLoadNameMappings:
         client = MagicMock()
         client.get_secret.side_effect = [
             Mock(secret_string=json.dumps({"source1": "dest1"})),
-            Mock(secret_string=json.dumps({"source1": "dest2"}))
+            Mock(secret_string=json.dumps({"source1": "dest2"})),
         ]
 
         result = load_name_mappings("mapping1,mapping2", client)
@@ -352,7 +322,7 @@ class TestLoadNameMappings:
         client = MagicMock()
         client.get_secret.side_effect = [
             ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "GetSecretValue"),
-            Mock(secret_string=json.dumps({"source2": "dest2"}))
+            Mock(secret_string=json.dumps({"source2": "dest2"})),
         ]
 
         result = load_name_mappings("mapping1,mapping2", client)
@@ -369,9 +339,7 @@ class TestGetCachedMappings:
     def test_cache_hit(self):
         """Second call should use cache."""
         client = MagicMock()
-        client.get_secret.return_value = Mock(
-            secret_string=json.dumps({"source1": "dest1"})
-        )
+        client.get_secret.return_value = Mock(secret_string=json.dumps({"source1": "dest1"}))
 
         # First call - cache miss
         result1 = get_cached_mappings("mapping1", 300, client)
@@ -388,7 +356,7 @@ class TestGetCachedMappings:
         client = MagicMock()
         client.get_secret.side_effect = [
             Mock(secret_string=json.dumps({"source1": "dest1"})),
-            Mock(secret_string=json.dumps({"source2": "dest2"}))
+            Mock(secret_string=json.dumps({"source2": "dest2"})),
         ]
 
         get_cached_mappings("mapping1", 300, client)

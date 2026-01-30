@@ -28,33 +28,31 @@ import logging
 class TestSecurityValidation:
     """Security validation tests."""
 
-    def test_no_plaintext_secrets_in_logs(
-        self,
-        secret_helper,
-        aws_region,
-        account_id,
-        caplog
-    ):
+    def test_no_plaintext_secrets_in_logs(self, secret_helper, aws_region, account_id, caplog):
         """Verify that plaintext secrets never appear in logs."""
         # Create secret with sensitive data
         sensitive_password = "SuperSecret123!@#"
         sensitive_api_key = "ak-1234567890abcdef"
-        secret_value = json.dumps({
-            "password": sensitive_password,
-            "api_key": sensitive_api_key,
-            "database": "postgres://user:pass@host:5432/db"
-        })
+        secret_value = json.dumps(
+            {
+                "password": sensitive_password,
+                "api_key": sensitive_api_key,
+                "database": "postgres://user:pass@host:5432/db",
+            }
+        )
         source = secret_helper.create_secret(value=secret_value)
         dest_name = f"test-dest-{source['Name']}"
 
         # Setup environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",  # Maximum verbosity
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",  # Maximum verbosity
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Capture logs
         with caplog.at_level(logging.DEBUG):
@@ -82,13 +80,7 @@ class TestSecurityValidation:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_error_messages_dont_leak_secrets(
-        self,
-        secret_helper,
-        aws_region,
-        account_id,
-        caplog
-    ):
+    def test_error_messages_dont_leak_secrets(self, secret_helper, aws_region, account_id, caplog):
         """Verify that error messages don't leak secret values."""
         # Create secret
         sensitive_value = "ThisIsASecretValue12345"
@@ -96,13 +88,15 @@ class TestSecurityValidation:
         source = secret_helper.create_secret(value=secret_value)
 
         # Setup environment with invalid configuration to trigger error
-        os.environ.update({
-            "DESTINATION_REGION": "invalid-region-xyz",  # Invalid
-            "DESTINATION_SECRET_NAME": f"test-dest-{source['Name']}",
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": "invalid-region-xyz",  # Invalid
+                "DESTINATION_SECRET_NAME": f"test-dest-{source['Name']}",
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Capture logs
         with caplog.at_level(logging.DEBUG):
@@ -123,7 +117,9 @@ class TestSecurityValidation:
 
         # Verify secret value is NOT in logs or error message
         assert sensitive_value not in all_logs, "Secret value leaked in error logs!"
-        assert sensitive_value not in json.dumps(response_body), "Secret value leaked in error response!"
+        assert sensitive_value not in json.dumps(
+            response_body
+        ), "Secret value leaked in error response!"
 
     def test_masking_utility_functions(self):
         """Test secret masking utility functions."""
@@ -154,25 +150,22 @@ class TestSecurityValidation:
         assert "sk-1234567890abcdef" not in sanitized
         assert "REDACTED" in sanitized or "****" in sanitized
 
-    def test_kms_encryption_used(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_kms_encryption_used(self, secret_helper, aws_region, account_id):
         """Verify that KMS encryption is used for secrets."""
         # Create secret with KMS encryption
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-            "KMS_KEY_ID": "alias/aws/secretsmanager",  # Use default KMS key
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+                "KMS_KEY_ID": "alias/aws/secretsmanager",  # Use default KMS key
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -200,12 +193,7 @@ class TestSecurityValidation:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_iam_permissions_validation(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_iam_permissions_validation(self, secret_helper, aws_region, account_id):
         """Verify IAM permissions are working correctly."""
         # This test verifies that the Lambda role has appropriate permissions
         # by attempting operations that should succeed
@@ -213,13 +201,15 @@ class TestSecurityValidation:
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -240,12 +230,7 @@ class TestSecurityValidation:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_cloudtrail_logging_enabled(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_cloudtrail_logging_enabled(self, secret_helper, aws_region, account_id):
         """Verify that CloudTrail logging is capturing API calls."""
         # This test documents that CloudTrail should be enabled
         # Actual verification would require CloudTrail API access
@@ -254,13 +239,15 @@ class TestSecurityValidation:
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         event = create_test_event(
             event_name="PutSecretValue",
@@ -286,32 +273,29 @@ class TestSecurityValidation:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_no_credentials_in_environment(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_no_credentials_in_environment(self, secret_helper, aws_region, account_id):
         """Verify no AWS credentials are stored in environment variables."""
         # Create secret
         source = secret_helper.create_secret()
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Check environment variables
         env_keys = os.environ.keys()
 
         # Should NOT contain AWS credentials in environment
-        assert "AWS_SECRET_ACCESS_KEY" not in env_keys or \
-               os.environ.get("AWS_SECRET_ACCESS_KEY") == "", \
-               "AWS secret access key found in environment!"
+        assert (
+            "AWS_SECRET_ACCESS_KEY" not in env_keys or os.environ.get("AWS_SECRET_ACCESS_KEY") == ""
+        ), "AWS secret access key found in environment!"
 
         # IAM role should be used instead (via instance metadata or execution role)
         # This is the secure way for Lambda
@@ -329,25 +313,22 @@ class TestSecurityValidation:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_secret_version_tracking(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_secret_version_tracking(self, secret_helper, aws_region, account_id):
         """Verify that secret versions are properly tracked."""
         # Create initial secret
         initial_value = json.dumps({"version": 1})
         source = secret_helper.create_secret(value=initial_value)
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # First replication
         event1 = create_test_event(

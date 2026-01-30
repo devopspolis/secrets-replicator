@@ -29,13 +29,13 @@ def mask_secret(secret: str, show_chars: int = 4) -> str:
         '*'
     """
     if not secret:
-        return ''
+        return ""
 
     secret_len = len(secret)
 
     # If secret is very short, just show asterisks
     if secret_len <= 2:
-        return '*' * secret_len
+        return "*" * secret_len
 
     # If secret is shorter than show_chars * 2, adjust
     if secret_len <= show_chars * 2:
@@ -84,8 +84,8 @@ def validate_regex(pattern: str, max_length: int = 1000) -> bool:
     # Check for potentially dangerous patterns
     # Nested quantifiers like (a+)+ or (a*)*
     dangerous_patterns = [
-        r'\([^)]*[*+]\)[*+]',  # (x+)+ or (x*)*
-        r'\([^)]*[*+]\)\{',    # (x+){n,m}
+        r"\([^)]*[*+]\)[*+]",  # (x+)+ or (x*)*
+        r"\([^)]*[*+]\)\{",  # (x+){n,m}
     ]
 
     for dangerous in dangerous_patterns:
@@ -124,12 +124,12 @@ def get_secret_metadata(secret_response: Dict[str, Any]) -> Dict[str, Any]:
     """
     # Fields to extract (non-sensitive only)
     metadata_fields = [
-        'ARN',
-        'Name',
-        'VersionId',
-        'VersionStages',
-        'CreatedDate',
-        'ResponseMetadata'
+        "ARN",
+        "Name",
+        "VersionId",
+        "VersionStages",
+        "CreatedDate",
+        "ResponseMetadata",
     ]
 
     metadata = {}
@@ -138,22 +138,18 @@ def get_secret_metadata(secret_response: Dict[str, Any]) -> Dict[str, Any]:
             metadata[field] = secret_response[field]
 
     # Add indication of secret type without the value
-    if 'SecretString' in secret_response:
-        metadata['SecretType'] = 'string'
-        metadata['SecretSize'] = len(secret_response['SecretString'])
-    elif 'SecretBinary' in secret_response:
-        metadata['SecretType'] = 'binary'
-        metadata['SecretSize'] = len(secret_response['SecretBinary'])
+    if "SecretString" in secret_response:
+        metadata["SecretType"] = "string"
+        metadata["SecretSize"] = len(secret_response["SecretString"])
+    elif "SecretBinary" in secret_response:
+        metadata["SecretType"] = "binary"
+        metadata["SecretSize"] = len(secret_response["SecretBinary"])
 
     return metadata
 
 
 def format_arn(
-    service: str,
-    region: str,
-    account_id: str,
-    resource_type: str,
-    resource_id: str
+    service: str, region: str, account_id: str, resource_type: str, resource_id: str
 ) -> str:
     """
     Format an AWS ARN string.
@@ -198,7 +194,7 @@ def parse_arn(arn: str) -> Optional[Dict[str, str]]:
     # ARN format: arn:partition:service:region:account-id:resource-type:resource-id
     # or: arn:partition:service:region:account-id:resource-type/resource-id
 
-    arn_pattern = r'^arn:([^:]+):([^:]+):([^:]*):([^:]*):(.+)$'
+    arn_pattern = r"^arn:([^:]+):([^:]+):([^:]*):([^:]*):(.+)$"
     match = re.match(arn_pattern, arn)
 
     if not match:
@@ -207,27 +203,27 @@ def parse_arn(arn: str) -> Optional[Dict[str, str]]:
     partition, service, region, account_id, resource = match.groups()
 
     # Parse resource (can be "type:id" or "type/id")
-    resource_parts = resource.split(':', 1)
+    resource_parts = resource.split(":", 1)
     if len(resource_parts) == 2:
         resource_type, resource_id = resource_parts
     else:
         # Try slash separator
-        resource_parts = resource.split('/', 1)
+        resource_parts = resource.split("/", 1)
         if len(resource_parts) == 2:
             resource_type, resource_id = resource_parts
         else:
             # No separator - entire thing is resource
-            resource_type = ''
+            resource_type = ""
             resource_id = resource
 
     return {
-        'partition': partition,
-        'service': service,
-        'region': region,
-        'account_id': account_id,
-        'resource_type': resource_type,
-        'resource_id': resource_id,
-        'resource': resource
+        "partition": partition,
+        "service": service,
+        "region": region,
+        "account_id": account_id,
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "resource": resource,
     }
 
 
@@ -257,14 +253,14 @@ def sanitize_log_message(message: str, patterns: list = None) -> str:
 
     # Default patterns to remove
     default_patterns = [
-        (r'password\s*=\s*[^\s]+', r'password=***'),
-        (r'api[_-]?key\s*=\s*[^\s]+', r'api_key=***'),
-        (r'secret\s*=\s*[^\s]+', r'secret=***'),
-        (r'token\s*=\s*[^\s]+', r'token=***'),
+        (r"password\s*=\s*[^\s]+", r"password=***"),
+        (r"api[_-]?key\s*=\s*[^\s]+", r"api_key=***"),
+        (r"secret\s*=\s*[^\s]+", r"secret=***"),
+        (r"token\s*=\s*[^\s]+", r"token=***"),
         # Base64 strings longer than 50 chars
-        (r'[A-Za-z0-9+/]{50,}={0,2}', r'[BASE64_REDACTED]'),
+        (r"[A-Za-z0-9+/]{50,}={0,2}", r"[BASE64_REDACTED]"),
         # JWT tokens
-        (r'eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*', r'[JWT_REDACTED]'),
+        (r"eyJ[A-Za-z0-9_-]*\.eyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*", r"[JWT_REDACTED]"),
     ]
 
     sanitized = message
@@ -281,7 +277,7 @@ def sanitize_log_message(message: str, patterns: list = None) -> str:
     return sanitized
 
 
-def truncate_string(text: str, max_length: int = 100, suffix: str = '...') -> str:
+def truncate_string(text: str, max_length: int = 100, suffix: str = "...") -> str:
     """
     Truncate a string to a maximum length.
 
@@ -302,7 +298,7 @@ def truncate_string(text: str, max_length: int = 100, suffix: str = '...') -> st
     if len(text) <= max_length:
         return text
 
-    return text[:max_length - len(suffix)] + suffix
+    return text[: max_length - len(suffix)] + suffix
 
 
 def is_binary_data(data: bytes) -> bool:
@@ -328,7 +324,7 @@ def is_binary_data(data: bytes) -> bool:
         return False
 
     # Check for null bytes (strong indicator of binary)
-    if b'\x00' in data:
+    if b"\x00" in data:
         return True
 
     # Count non-printable characters
@@ -358,7 +354,7 @@ def get_region_from_arn(arn: str) -> Optional[str]:
     """
     components = parse_arn(arn)
     if components:
-        return components['region']
+        return components["region"]
     return None
 
 
@@ -378,5 +374,5 @@ def get_account_from_arn(arn: str) -> Optional[str]:
     """
     components = parse_arn(arn)
     if components:
-        return components['account_id']
+        return components["account_id"]
     return None

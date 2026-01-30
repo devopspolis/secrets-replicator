@@ -22,10 +22,10 @@ logger = logging.getLogger(__name__)
 
 # Global cache for name mappings (persists across Lambda invocations)
 _mapping_cache = {
-    'data': None,           # Dict[str, str] - merged mappings
-    'loaded_at': 0,         # float - timestamp
-    'ttl': 300,            # int - cache TTL in seconds
-    'source_list': None    # str - comma-separated mapping secret names
+    "data": None,  # Dict[str, str] - merged mappings
+    "loaded_at": 0,  # float - timestamp
+    "ttl": 300,  # int - cache TTL in seconds
+    "source_list": None,  # str - comma-separated mapping secret names
 }
 
 
@@ -56,7 +56,7 @@ def load_name_mappings(mapping_list: str, client) -> Dict[str, str]:
         return {}
 
     merged_mappings = {}
-    mapping_secrets = [s.strip() for s in mapping_list.split(',') if s.strip()]
+    mapping_secrets = [s.strip() for s in mapping_list.split(",") if s.strip()]
 
     logger.info(f"Loading {len(mapping_secrets)} name mapping secrets")
 
@@ -74,35 +74,45 @@ def load_name_mappings(mapping_list: str, client) -> Dict[str, str]:
 
             # Validate mapping data is a dict
             if not isinstance(mapping_data, dict):
-                logger.error(f"Mapping secret {secret_name} must be a JSON object, got {type(mapping_data)}")
+                logger.error(
+                    f"Mapping secret {secret_name} must be a JSON object, got {type(mapping_data)}"
+                )
                 raise ValueError(f"Mapping secret {secret_name} must be a JSON object")
 
             # Merge mappings (later mappings override earlier ones)
             for source_name, dest_name in mapping_data.items():
                 # Validate both are strings
                 if not isinstance(source_name, str) or not isinstance(dest_name, str):
-                    logger.warning(f"Skipping invalid mapping in {secret_name}: {source_name} -> {dest_name}")
+                    logger.warning(
+                        f"Skipping invalid mapping in {secret_name}: {source_name} -> {dest_name}"
+                    )
                     continue
 
                 # Normalize empty string to None (will use source name)
                 if dest_name == "":
                     merged_mappings[source_name] = source_name
-                    logger.debug(f"Name mapping '{source_name}' -> '{source_name}' (empty value, using source)")
+                    logger.debug(
+                        f"Name mapping '{source_name}' -> '{source_name}' (empty value, using source)"
+                    )
                 else:
                     merged_mappings[source_name] = dest_name
                     logger.debug(f"Name mapping '{source_name}' -> '{dest_name}'")
 
         except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(f"Failed to load mapping secret {secret_name}: {error_code} - {e}")
             # Continue with other mappings rather than failing completely
             continue
         except Exception as e:
-            logger.error(f"Unexpected error loading mapping secret {secret_name}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error loading mapping secret {secret_name}: {e}", exc_info=True
+            )
             # Continue with other mappings
             continue
 
-    logger.info(f"Loaded {len(merged_mappings)} name mappings from {len(mapping_secrets)} mapping secrets")
+    logger.info(
+        f"Loaded {len(merged_mappings)} name mappings from {len(mapping_secrets)} mapping secrets"
+    )
     return merged_mappings
 
 
@@ -126,24 +136,24 @@ def get_cached_mappings(mapping_list: str, ttl: int, client) -> Dict[str, str]:
 
     # Check if cache is valid
     cache_valid = (
-        _mapping_cache['data'] is not None and
-        _mapping_cache['source_list'] == mapping_list and
-        (now - _mapping_cache['loaded_at']) < _mapping_cache['ttl']
+        _mapping_cache["data"] is not None
+        and _mapping_cache["source_list"] == mapping_list
+        and (now - _mapping_cache["loaded_at"]) < _mapping_cache["ttl"]
     )
 
     if cache_valid:
         logger.debug("Using cached name mappings")
-        return _mapping_cache['data']
+        return _mapping_cache["data"]
 
     # Load fresh configuration
     logger.info(f"Loading fresh name mappings from: {mapping_list}")
     mappings = load_name_mappings(mapping_list, client)
 
     # Update cache
-    _mapping_cache['data'] = mappings
-    _mapping_cache['loaded_at'] = now
-    _mapping_cache['ttl'] = ttl
-    _mapping_cache['source_list'] = mapping_list
+    _mapping_cache["data"] = mappings
+    _mapping_cache["loaded_at"] = now
+    _mapping_cache["ttl"] = ttl
+    _mapping_cache["source_list"] = mapping_list
 
     logger.info(f"Name mappings cached (TTL: {ttl}s)")
     return mappings
@@ -176,7 +186,7 @@ def _match_pattern(secret_name: str, pattern: str) -> bool:
         False
     """
     # Exact match (no wildcard)
-    if '*' not in pattern:
+    if "*" not in pattern:
         return secret_name == pattern
 
     # Convert glob pattern to regex
@@ -184,10 +194,10 @@ def _match_pattern(secret_name: str, pattern: str) -> bool:
     escaped_pattern = re.escape(pattern)
 
     # Replace escaped \* with regex .*
-    regex_pattern = escaped_pattern.replace(r'\*', '.*')
+    regex_pattern = escaped_pattern.replace(r"\*", ".*")
 
     # Anchor the pattern
-    regex_pattern = f'^{regex_pattern}$'
+    regex_pattern = f"^{regex_pattern}$"
 
     # Compile and match
     try:
@@ -222,26 +232,28 @@ def _apply_pattern_mapping(secret_name: str, pattern: str, dest_pattern: str) ->
         'new-app'
     """
     # If destination has no wildcards, return it as-is
-    if '*' not in dest_pattern:
+    if "*" not in dest_pattern:
         return dest_pattern
 
     # Build regex to extract wildcard portions
     escaped_pattern = re.escape(pattern)
-    regex_pattern = escaped_pattern.replace(r'\*', '(.*?)')
-    regex_pattern = f'^{regex_pattern}$'
+    regex_pattern = escaped_pattern.replace(r"\*", "(.*?)")
+    regex_pattern = f"^{regex_pattern}$"
 
     try:
         match = re.match(regex_pattern, secret_name)
         if not match:
             # Should not happen if _match_pattern was called first
-            logger.warning(f"Pattern '{pattern}' matched but regex extraction failed for '{secret_name}'")
+            logger.warning(
+                f"Pattern '{pattern}' matched but regex extraction failed for '{secret_name}'"
+            )
             return dest_pattern
 
         # Replace wildcards in destination with captured groups
         result = dest_pattern
         for i, captured in enumerate(match.groups(), 1):
             # Replace first * with captured value
-            result = result.replace('*', captured, 1)
+            result = result.replace("*", captured, 1)
 
         logger.debug(f"Pattern mapping: '{secret_name}' ({pattern}) -> '{result}' ({dest_pattern})")
         return result
@@ -294,19 +306,21 @@ def get_destination_name(source_secret_name: str, destination, client) -> Option
     # LAYER 1: Check if secret_names is configured
     if not destination.secret_names:
         # No mapping configured - replicate ALL secrets with same name (standard DR/HA pattern)
-        logger.debug(f"No secret_names configured for destination, using source name: {source_secret_name}")
+        logger.debug(
+            f"No secret_names configured for destination, using source name: {source_secret_name}"
+        )
         return source_secret_name
 
     # LAYER 2: Load and check mappings
     mappings = get_cached_mappings(
-        destination.secret_names,
-        destination.secret_names_cache_ttl,
-        client
+        destination.secret_names, destination.secret_names_cache_ttl, client
     )
 
     if not mappings:
         # Mapping list specified but no mappings loaded - DO NOT replicate (fail-safe)
-        logger.warning(f"secret_names specified but no mappings loaded - not replicating '{source_secret_name}'")
+        logger.warning(
+            f"secret_names specified but no mappings loaded - not replicating '{source_secret_name}'"
+        )
         return None
 
     # LAYER 3: Try exact match first (most common case, fastest)
@@ -318,17 +332,21 @@ def get_destination_name(source_secret_name: str, destination, client) -> Option
     # LAYER 4: Try pattern matching (check all patterns in order)
     for pattern, dest_pattern in mappings.items():
         # Skip patterns without wildcards (already checked in exact match)
-        if '*' not in pattern:
+        if "*" not in pattern:
             continue
 
         if _match_pattern(source_secret_name, pattern):
             # Apply pattern transformation
             dest_name = _apply_pattern_mapping(source_secret_name, pattern, dest_pattern)
-            logger.info(f"Pattern name mapping found: '{source_secret_name}' matched '{pattern}' -> '{dest_name}'")
+            logger.info(
+                f"Pattern name mapping found: '{source_secret_name}' matched '{pattern}' -> '{dest_name}'"
+            )
             return dest_name
 
     # LAYER 5: No mapping found - DO NOT replicate (filtering behavior)
-    logger.info(f"Secret '{source_secret_name}' does not match any pattern in secret_names - skipping replication to this destination")
+    logger.info(
+        f"Secret '{source_secret_name}' does not match any pattern in secret_names - skipping replication to this destination"
+    )
     return None
 
 
@@ -339,10 +357,5 @@ def clear_mapping_cache():
     Useful for testing and forcing a cache refresh.
     """
     global _mapping_cache
-    _mapping_cache = {
-        'data': None,
-        'loaded_at': 0,
-        'ttl': 300,
-        'source_list': None
-    }
+    _mapping_cache = {"data": None, "loaded_at": 0, "ttl": 300, "source_list": None}
     logger.info("Name mapping cache cleared")

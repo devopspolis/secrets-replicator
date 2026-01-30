@@ -15,7 +15,7 @@ from event_parser import (
     parse_manual_event,
     validate_manual_event_for_replication,
     EventParsingError,
-    SecretEvent
+    SecretEvent,
 )
 
 
@@ -32,7 +32,7 @@ class TestIsManualTrigger:
         event = {
             "source": "aws.secretsmanager",
             "detail-type": "AWS API Call via CloudTrail",
-            "detail": {"eventName": "PutSecretValue"}
+            "detail": {"eventName": "PutSecretValue"},
         }
         assert is_manual_trigger(event) is False
 
@@ -57,11 +57,7 @@ class TestParseManualEvent:
 
     def test_parse_single_secret_id(self):
         """Parses event with single secretId."""
-        event = {
-            "source": "manual",
-            "secretId": "my-secret",
-            "region": "us-east-1"
-        }
+        event = {"source": "manual", "secretId": "my-secret", "region": "us-east-1"}
         events = parse_manual_event(event, "123456789012")
 
         assert len(events) == 1
@@ -75,7 +71,7 @@ class TestParseManualEvent:
         event = {
             "source": "manual",
             "secretIds": ["secret-1", "secret-2", "secret-3"],
-            "region": "us-west-2"
+            "region": "us-west-2",
         }
         events = parse_manual_event(event, "123456789012")
 
@@ -93,7 +89,7 @@ class TestParseManualEvent:
             "source": "manual",
             "secretId": "single-secret",
             "secretIds": ["list-secret-1", "list-secret-2"],
-            "region": "eu-west-1"
+            "region": "eu-west-1",
         }
         events = parse_manual_event(event, "123456789012")
 
@@ -109,7 +105,7 @@ class TestParseManualEvent:
             "source": "manual",
             "secretId": "secret-a",
             "secretIds": ["secret-a", "secret-b", "secret-a"],
-            "region": "us-east-1"
+            "region": "us-east-1",
         }
         events = parse_manual_event(event, "123456789012")
 
@@ -119,10 +115,7 @@ class TestParseManualEvent:
 
     def test_parse_with_region_from_env(self):
         """Uses AWS_REGION environment variable when region not in event."""
-        event = {
-            "source": "manual",
-            "secretId": "my-secret"
-        }
+        event = {"source": "manual", "secretId": "my-secret"}
 
         with patch.dict(os.environ, {"AWS_REGION": "ap-southeast-1"}, clear=False):
             events = parse_manual_event(event, "123456789012")
@@ -132,10 +125,7 @@ class TestParseManualEvent:
 
     def test_parse_with_region_from_default_env(self):
         """Uses AWS_DEFAULT_REGION when AWS_REGION not set."""
-        event = {
-            "source": "manual",
-            "secretId": "my-secret"
-        }
+        event = {"source": "manual", "secretId": "my-secret"}
 
         # Remove AWS_REGION if it exists and set AWS_DEFAULT_REGION
         env_updates = {"AWS_DEFAULT_REGION": "sa-east-1"}
@@ -156,7 +146,7 @@ class TestParseManualEvent:
             "source": "manual",
             "secretId": "my-secret",
             "region": "us-east-1",
-            "accountId": "987654321098"
+            "accountId": "987654321098",
         }
         events = parse_manual_event(event, "123456789012")
 
@@ -165,11 +155,7 @@ class TestParseManualEvent:
     def test_parse_secret_arn_as_id(self):
         """Handles secret ARN as secretId."""
         arn = "arn:aws:secretsmanager:us-east-1:123456789012:secret:my-secret-AbCdEf"
-        event = {
-            "source": "manual",
-            "secretId": arn,
-            "region": "us-east-1"
-        }
+        event = {"source": "manual", "secretId": arn, "region": "us-east-1"}
         events = parse_manual_event(event, "123456789012")
 
         assert len(events) == 1
@@ -181,7 +167,7 @@ class TestParseManualEvent:
         event = {
             "source": "manual",
             "secretIds": ["  secret-1  ", "secret-2  "],
-            "region": "us-east-1"
+            "region": "us-east-1",
         }
         events = parse_manual_event(event, "123456789012")
 
@@ -190,22 +176,14 @@ class TestParseManualEvent:
 
     def test_parse_sets_manual_flag_in_request_parameters(self):
         """Sets manual=True in request_parameters."""
-        event = {
-            "source": "manual",
-            "secretId": "my-secret",
-            "region": "us-east-1"
-        }
+        event = {"source": "manual", "secretId": "my-secret", "region": "us-east-1"}
         events = parse_manual_event(event, "123456789012")
 
         assert events[0].request_parameters.get("manual") is True
 
     def test_parse_sets_user_identity_to_manual_trigger(self):
         """Sets user_identity to 'manual-trigger'."""
-        event = {
-            "source": "manual",
-            "secretId": "my-secret",
-            "region": "us-east-1"
-        }
+        event = {"source": "manual", "secretId": "my-secret", "region": "us-east-1"}
         events = parse_manual_event(event, "123456789012")
 
         assert events[0].user_identity == "manual-trigger"
@@ -260,7 +238,7 @@ class TestParseManualEvent:
         event = {
             "source": "manual",
             "secretIds": ["valid", 123, "also-valid"],
-            "region": "us-east-1"
+            "region": "us-east-1",
         }
 
         with pytest.raises(EventParsingError) as exc_info:
@@ -296,7 +274,7 @@ class TestValidateManualEventForReplication:
             user_identity="manual-trigger",
             source_ip=None,
             request_parameters={"manual": True},
-            response_elements={}
+            response_elements={},
         )
 
         assert validate_manual_event_for_replication(event) is True
@@ -314,7 +292,7 @@ class TestValidateManualEventForReplication:
             user_identity="manual-trigger",
             source_ip=None,
             request_parameters={},
-            response_elements={}
+            response_elements={},
         )
 
         assert validate_manual_event_for_replication(event) is False
@@ -332,7 +310,7 @@ class TestValidateManualEventForReplication:
             user_identity="manual-trigger",
             source_ip=None,
             request_parameters={},
-            response_elements={}
+            response_elements={},
         )
 
         assert validate_manual_event_for_replication(event) is False
@@ -350,7 +328,7 @@ class TestValidateManualEventForReplication:
             user_identity="manual-trigger",
             source_ip=None,
             request_parameters={},
-            response_elements={}
+            response_elements={},
         )
 
         assert validate_manual_event_for_replication(event) is False
@@ -368,7 +346,7 @@ class TestValidateManualEventForReplication:
             user_identity="manual-trigger",
             source_ip=None,
             request_parameters={},
-            response_elements={}
+            response_elements={},
         )
 
         assert validate_manual_event_for_replication(event) is True
@@ -379,11 +357,7 @@ class TestManualTriggerIntegration:
 
     def test_manual_event_structure_for_handler(self):
         """Verifies manual event structure matches handler expectations."""
-        event = {
-            "source": "manual",
-            "secretId": "app/database/credentials",
-            "region": "us-east-1"
-        }
+        event = {"source": "manual", "secretId": "app/database/credentials", "region": "us-east-1"}
         events = parse_manual_event(event, "123456789012")
         parsed = events[0]
 
@@ -399,12 +373,8 @@ class TestManualTriggerIntegration:
         """Handles secret names with path separators."""
         event = {
             "source": "manual",
-            "secretIds": [
-                "myapp/prod/database",
-                "myapp/prod/api-keys",
-                "shared/certificates/tls"
-            ],
-            "region": "us-east-1"
+            "secretIds": ["myapp/prod/database", "myapp/prod/api-keys", "shared/certificates/tls"],
+            "region": "us-east-1",
         }
         events = parse_manual_event(event, "123456789012")
 

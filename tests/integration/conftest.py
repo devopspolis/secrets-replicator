@@ -29,30 +29,23 @@ def pytest_addoption(parser):
         "--integration",
         action="store_true",
         default=False,
-        help="Run integration tests (requires AWS credentials)"
+        help="Run integration tests (requires AWS credentials)",
     )
     parser.addoption(
-        "--aws-region",
-        action="store",
-        default="us-east-1",
-        help="AWS region for integration tests"
+        "--aws-region", action="store", default="us-east-1", help="AWS region for integration tests"
     )
     parser.addoption(
         "--dest-region",
         action="store",
         default="us-west-2",
-        help="Destination AWS region for cross-region tests"
+        help="Destination AWS region for cross-region tests",
     )
 
 
 def pytest_configure(config):
     """Configure custom markers."""
-    config.addinivalue_line(
-        "markers", "integration: mark test as integration test (requires AWS)"
-    )
-    config.addinivalue_line(
-        "markers", "slow: mark test as slow (>5 seconds)"
-    )
+    config.addinivalue_line("markers", "integration: mark test as integration test (requires AWS)")
+    config.addinivalue_line("markers", "slow: mark test as slow (>5 seconds)")
     config.addinivalue_line(
         "markers", "cross_region: mark test as cross-region (requires two regions)"
     )
@@ -93,7 +86,7 @@ class SecretHelper:
         value: str = None,
         description: str = "Test secret for integration tests",
         kms_key_id: Optional[str] = None,
-        tags: Optional[List[Dict[str, str]]] = None
+        tags: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
         Create a test secret.
@@ -130,10 +123,7 @@ class SecretHelper:
         except ClientError as e:
             if e.response["Error"]["Code"] == "ResourceExistsException":
                 # Secret exists - update it instead
-                response = self.client.put_secret_value(
-                    SecretId=name,
-                    SecretString=value
-                )
+                response = self.client.put_secret_value(SecretId=name, SecretString=value)
                 self.created_secrets.append(name)
                 return {
                     "ARN": response["ARN"],
@@ -161,10 +151,7 @@ class SecretHelper:
 
     def update_secret(self, secret_id: str, value: str) -> Dict[str, Any]:
         """Update secret value."""
-        response = self.client.put_secret_value(
-            SecretId=secret_id,
-            SecretString=value
-        )
+        response = self.client.put_secret_value(SecretId=secret_id, SecretString=value)
         return {
             "ARN": response["ARN"],
             "Name": response["Name"],
@@ -263,25 +250,14 @@ def sample_json_mapping():
     """Sample JSON mapping for testing."""
     return {
         "transformations": [
-            {
-                "path": "$.environment",
-                "find": "development",
-                "replace": "production"
-            },
-            {
-                "path": "$.region",
-                "find": "us-east-1",
-                "replace": "us-west-2"
-            }
+            {"path": "$.environment", "find": "development", "replace": "production"},
+            {"path": "$.region", "find": "us-east-1", "replace": "us-west-2"},
         ]
     }
 
 
 def wait_for_secret(
-    helper: SecretHelper,
-    secret_id: str,
-    max_wait: int = 30,
-    interval: float = 1.0
+    helper: SecretHelper, secret_id: str, max_wait: int = 30, interval: float = 1.0
 ) -> Optional[Dict[str, Any]]:
     """
     Wait for secret to exist (useful after async operations).
@@ -309,7 +285,7 @@ def wait_for_secret_value(
     secret_id: str,
     expected_value: Optional[str] = None,
     max_wait: int = 30,
-    interval: float = 1.0
+    interval: float = 1.0,
 ) -> bool:
     """
     Wait for secret value to match expected value.

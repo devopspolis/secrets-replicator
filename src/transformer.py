@@ -19,26 +19,31 @@ from jsonpath_ng import parse as jsonpath_parse
 # Exceptions
 class TransformationError(Exception):
     """Raised when transformation fails"""
+
     pass
 
 
 class VariableExpansionError(TransformationError):
     """Raised when variable expansion fails"""
+
     pass
 
 
 class RegexTimeoutError(TransformationError):
     """Raised when regex execution times out"""
+
     pass
 
 
 class InvalidRegexError(TransformationError):
     """Raised when regex pattern is invalid"""
+
     pass
 
 
 class InvalidJsonError(TransformationError):
     """Raised when JSON parsing fails"""
+
     pass
 
 
@@ -46,6 +51,7 @@ class InvalidJsonError(TransformationError):
 @dataclass
 class SedRule:
     """Represents a sed-style transformation rule"""
+
     pattern: str
     replacement: str
     flags: int = 0
@@ -62,9 +68,10 @@ class SedRule:
 @dataclass
 class JsonMapping:
     """Represents a JSON field transformation"""
-    path: str           # JSONPath expression
-    find: str          # Value to find
-    replace: str       # Replacement value
+
+    path: str  # JSONPath expression
+    find: str  # Value to find
+    replace: str  # Replacement value
 
     def __post_init__(self):
         """Validate the JSONPath expression"""
@@ -94,7 +101,7 @@ def detect_transform_type(content: str) -> str:
 
     # Empty content defaults to sed (will result in no-op)
     if not content:
-        return 'sed'
+        return "sed"
 
     # Try JSON parsing first (more structured format)
     try:
@@ -103,14 +110,14 @@ def detect_transform_type(content: str) -> str:
         # Must be a JSON object (dict)
         if isinstance(parsed, dict):
             # Check for JSONPath patterns in keys (must start with $.)
-            if any(isinstance(key, str) and key.startswith('$.') for key in parsed.keys()):
-                return 'json'
+            if any(isinstance(key, str) and key.startswith("$.") for key in parsed.keys()):
+                return "json"
     except (json.JSONDecodeError, ValueError):
         # Not valid JSON, fall through to sed
         pass
 
     # Default to sed (handles all text-based patterns including sed scripts)
-    return 'sed'
+    return "sed"
 
 
 def parse_transform_names(tag_value: str) -> List[str]:
@@ -134,7 +141,7 @@ def parse_transform_names(tag_value: str) -> List[str]:
         return []
 
     # Split by comma and strip whitespace from each name
-    names = [name.strip() for name in tag_value.split(',')]
+    names = [name.strip() for name in tag_value.split(",")]
 
     # Filter out empty strings
     return [name for name in names if name]
@@ -171,15 +178,14 @@ def expand_variables(text: str, context: Dict[str, str]) -> str:
     """
     # Pattern matches ${VARIABLE_NAME} where VARIABLE_NAME is uppercase letters, numbers, and underscores
     # Must start with a letter or underscore
-    pattern = re.compile(r'\$\{([A-Z_][A-Z0-9_]*)\}')
+    pattern = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
 
     def replace_variable(match):
         var_name = match.group(1)
         if var_name not in context:
-            available = ', '.join(sorted(context.keys())) if context else '(none)'
+            available = ", ".join(sorted(context.keys())) if context else "(none)"
             raise VariableExpansionError(
-                f"Undefined variable: ${{{var_name}}}. "
-                f"Available variables: {available}"
+                f"Undefined variable: ${{{var_name}}}. " f"Available variables: {available}"
             )
         return context[var_name]
 
@@ -226,16 +232,16 @@ def parse_sedfile(content: str) -> List[SedRule]:
     """
     rules = []
 
-    for line_num, line in enumerate(content.split('\n'), 1):
+    for line_num, line in enumerate(content.split("\n"), 1):
         # Strip whitespace
         line = line.strip()
 
         # Skip empty lines and comments
-        if not line or line.startswith('#'):
+        if not line or line.startswith("#"):
             continue
 
         # Parse sed command: s/pattern/replacement/[flags]
-        if not line.startswith('s/'):
+        if not line.startswith("s/"):
             raise TransformationError(
                 f"Line {line_num}: Sed rule must start with 's/' - got '{line[:20]}...'"
             )
@@ -245,7 +251,7 @@ def parse_sedfile(content: str) -> List[SedRule]:
 
         # Find delimiter (usually /, but could be others)
         # We'll use / as the delimiter for simplicity
-        parts = line.split('/')
+        parts = line.split("/")
 
         if len(parts) < 2:
             raise TransformationError(
@@ -254,31 +260,33 @@ def parse_sedfile(content: str) -> List[SedRule]:
 
         pattern = parts[0]
         replacement = parts[1]
-        flags_str = parts[2] if len(parts) > 2 else ''
+        flags_str = parts[2] if len(parts) > 2 else ""
 
         # Parse flags
         re_flags = 0
         global_replace = False
 
         for flag in flags_str:
-            if flag == 'g':
+            if flag == "g":
                 global_replace = True
-            elif flag == 'i':
+            elif flag == "i":
                 re_flags |= re.IGNORECASE
-            elif flag == 'm':
+            elif flag == "m":
                 re_flags |= re.MULTILINE
-            elif flag == 's':
+            elif flag == "s":
                 re_flags |= re.DOTALL
             elif flag:  # Ignore empty string but warn on unknown flags
                 # In production, you might want to log a warning here
                 pass
 
-        rules.append(SedRule(
-            pattern=pattern,
-            replacement=replacement,
-            flags=re_flags,
-            global_replace=global_replace
-        ))
+        rules.append(
+            SedRule(
+                pattern=pattern,
+                replacement=replacement,
+                flags=re_flags,
+                global_replace=global_replace,
+            )
+        )
 
     return rules
 
@@ -288,11 +296,7 @@ def _timeout_handler(signum, frame):
     raise RegexTimeoutError("Regex execution timed out (possible ReDoS attack)")
 
 
-def apply_sed_transforms(
-    secret_value: str,
-    rules: List[SedRule],
-    timeout_seconds: int = 5
-) -> str:
+def apply_sed_transforms(secret_value: str, rules: List[SedRule], timeout_seconds: int = 5) -> str:
     """
     Apply sed-style regex transformations to secret value.
 
@@ -345,9 +349,7 @@ def apply_sed_transforms(
         except RegexTimeoutError:
             raise
         except re.error as e:
-            raise TransformationError(
-                f"Regex error in pattern '{rule.pattern}': {e}"
-            ) from e
+            raise TransformationError(f"Regex error in pattern '{rule.pattern}': {e}") from e
         except Exception as e:
             raise TransformationError(
                 f"Unexpected error applying rule '{rule.pattern}': {e}"
@@ -390,41 +392,36 @@ def parse_json_mapping(content: str) -> List[JsonMapping]:
     if not isinstance(data, dict):
         raise TransformationError("JSON must be an object with 'transformations' array")
 
-    if 'transformations' not in data:
+    if "transformations" not in data:
         raise TransformationError("JSON must contain 'transformations' array")
 
-    if not isinstance(data['transformations'], list):
+    if not isinstance(data["transformations"], list):
         raise TransformationError("'transformations' must be an array")
 
     mappings = []
 
-    for idx, mapping_dict in enumerate(data['transformations']):
+    for idx, mapping_dict in enumerate(data["transformations"]):
         if not isinstance(mapping_dict, dict):
-            raise TransformationError(
-                f"Transformation {idx}: must be an object"
-            )
+            raise TransformationError(f"Transformation {idx}: must be an object")
 
         # Validate required fields
-        required_fields = ['path', 'find', 'replace']
+        required_fields = ["path", "find", "replace"]
         for field in required_fields:
             if field not in mapping_dict:
-                raise TransformationError(
-                    f"Transformation {idx}: missing required field '{field}'"
-                )
+                raise TransformationError(f"Transformation {idx}: missing required field '{field}'")
 
-        mappings.append(JsonMapping(
-            path=mapping_dict['path'],
-            find=mapping_dict['find'],
-            replace=mapping_dict['replace']
-        ))
+        mappings.append(
+            JsonMapping(
+                path=mapping_dict["path"],
+                find=mapping_dict["find"],
+                replace=mapping_dict["replace"],
+            )
+        )
 
     return mappings
 
 
-def apply_json_transforms(
-    secret_value: str,
-    mappings: List[JsonMapping]
-) -> str:
+def apply_json_transforms(secret_value: str, mappings: List[JsonMapping]) -> str:
     """
     Apply JSON path-based transformations to secret value.
 
@@ -477,20 +474,15 @@ def apply_json_transforms(
                     jsonpath_expr.update(secret_obj, new_value)
 
         except Exception as e:
-            raise TransformationError(
-                f"Error applying JSONPath '{mapping.path}': {e}"
-            ) from e
+            raise TransformationError(f"Error applying JSONPath '{mapping.path}': {e}") from e
 
     # Return JSON string (compact format, no extra whitespace)
-    return json.dumps(secret_obj, separators=(',', ':'))
+    return json.dumps(secret_obj, separators=(",", ":"))
 
 
 # Convenience function for mode selection
 def transform_secret(
-    secret_value: str,
-    mode: str,
-    rules_content: str,
-    is_binary: bool = False
+    secret_value: str, mode: str, rules_content: str, is_binary: bool = False
 ) -> str:
     """
     Transform secret value using specified mode.
@@ -512,10 +504,10 @@ def transform_secret(
         # Don't transform binary secrets
         return secret_value
 
-    if mode == 'sed':
+    if mode == "sed":
         rules = parse_sedfile(rules_content)
         return apply_sed_transforms(secret_value, rules)
-    elif mode == 'json':
+    elif mode == "json":
         mappings = parse_json_mapping(rules_content)
         return apply_json_transforms(secret_value, mappings)
     else:

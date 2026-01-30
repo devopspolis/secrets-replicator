@@ -24,10 +24,10 @@ logger = logging.getLogger(__name__)
 
 # Global cache for filter configuration (persists across Lambda invocations)
 _filter_cache = {
-    'data': None,           # Dict[str, Optional[str]] - merged filters
-    'loaded_at': 0,         # float - timestamp
-    'ttl': 300,            # int - cache TTL in seconds
-    'source_list': None    # str - comma-separated filter secret names
+    "data": None,  # Dict[str, Optional[str]] - merged filters
+    "loaded_at": 0,  # float - timestamp
+    "ttl": 300,  # int - cache TTL in seconds
+    "source_list": None,  # str - comma-separated filter secret names
 }
 
 
@@ -66,7 +66,7 @@ def load_filter_configuration(filter_list: str, client) -> Dict[str, Optional[st
         return {}
 
     merged_filters = {}
-    filter_secrets = [s.strip() for s in filter_list.split(',') if s.strip()]
+    filter_secrets = [s.strip() for s in filter_list.split(",") if s.strip()]
 
     logger.info(f"Loading {len(filter_secrets)} filter secrets")
 
@@ -84,7 +84,9 @@ def load_filter_configuration(filter_list: str, client) -> Dict[str, Optional[st
 
             # Validate filter data is a dict
             if not isinstance(filter_data, dict):
-                logger.error(f"Filter secret {secret_name} must be a JSON object, got {type(filter_data)}")
+                logger.error(
+                    f"Filter secret {secret_name} must be a JSON object, got {type(filter_data)}"
+                )
                 raise ValueError(f"Filter secret {secret_name} must be a JSON object")
 
             # Merge filters (later filters override earlier ones)
@@ -98,16 +100,20 @@ def load_filter_configuration(filter_list: str, client) -> Dict[str, Optional[st
                     logger.debug(f"Filter pattern '{pattern}' -> transformation '{transform_name}'")
 
         except ClientError as e:
-            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(f"Failed to load filter secret {secret_name}: {error_code} - {e}")
             # Continue with other filters rather than failing completely
             continue
         except Exception as e:
-            logger.error(f"Unexpected error loading filter secret {secret_name}: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error loading filter secret {secret_name}: {e}", exc_info=True
+            )
             # Continue with other filters
             continue
 
-    logger.info(f"Loaded {len(merged_filters)} filter patterns from {len(filter_secrets)} filter secrets")
+    logger.info(
+        f"Loaded {len(merged_filters)} filter patterns from {len(filter_secrets)} filter secrets"
+    )
     return merged_filters
 
 
@@ -131,24 +137,24 @@ def get_cached_filters(filter_list: str, ttl: int, client) -> Dict[str, Optional
 
     # Check if cache is valid
     cache_valid = (
-        _filter_cache['data'] is not None and
-        _filter_cache['source_list'] == filter_list and
-        (now - _filter_cache['loaded_at']) < _filter_cache['ttl']
+        _filter_cache["data"] is not None
+        and _filter_cache["source_list"] == filter_list
+        and (now - _filter_cache["loaded_at"]) < _filter_cache["ttl"]
     )
 
     if cache_valid:
         logger.debug("Using cached filter configuration")
-        return _filter_cache['data']
+        return _filter_cache["data"]
 
     # Load fresh configuration
     logger.info(f"Loading fresh filter configuration from: {filter_list}")
     filters = load_filter_configuration(filter_list, client)
 
     # Update cache
-    _filter_cache['data'] = filters
-    _filter_cache['loaded_at'] = now
-    _filter_cache['ttl'] = ttl
-    _filter_cache['source_list'] = filter_list
+    _filter_cache["data"] = filters
+    _filter_cache["loaded_at"] = now
+    _filter_cache["ttl"] = ttl
+    _filter_cache["source_list"] = filter_list
 
     logger.info(f"Filter configuration cached (TTL: {ttl}s)")
     return filters
@@ -185,7 +191,7 @@ def match_secret_pattern(secret_name: str, pattern: str) -> bool:
         False
     """
     # Exact match (no wildcard)
-    if '*' not in pattern:
+    if "*" not in pattern:
         return secret_name == pattern
 
     # Convert glob pattern to regex
@@ -193,10 +199,10 @@ def match_secret_pattern(secret_name: str, pattern: str) -> bool:
     escaped_pattern = re.escape(pattern)
 
     # Replace escaped \* with regex .*
-    regex_pattern = escaped_pattern.replace(r'\*', '.*')
+    regex_pattern = escaped_pattern.replace(r"\*", ".*")
 
     # Anchor the pattern
-    regex_pattern = f'^{regex_pattern}$'
+    regex_pattern = f"^{regex_pattern}$"
 
     # Compile and match
     try:
@@ -207,7 +213,9 @@ def match_secret_pattern(secret_name: str, pattern: str) -> bool:
         return False
 
 
-def find_matching_filter(secret_name: str, filters: Dict[str, Optional[str]]) -> Union[Optional[str], bool]:
+def find_matching_filter(
+    secret_name: str, filters: Dict[str, Optional[str]]
+) -> Union[Optional[str], bool]:
     """
     Find transformation for a secret based on filter patterns.
 
@@ -245,7 +253,7 @@ def find_matching_filter(secret_name: str, filters: Dict[str, Optional[str]]) ->
 
     # Check wildcard patterns
     for pattern, transform_name in filters.items():
-        if '*' in pattern:
+        if "*" in pattern:
             if match_secret_pattern(secret_name, pattern):
                 logger.debug(f"Pattern match: '{secret_name}' matches '{pattern}'")
                 return transform_name
@@ -305,21 +313,23 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
         return (False, None)
 
     # Hardcoded exclusion for config secrets
-    if secret_name.startswith('secrets-replicator/config/'):
+    if secret_name.startswith("secrets-replicator/config/"):
         logger.debug(f"Excluded: config secret (prefix: secrets-replicator/config/)")
         return (False, None)
 
-    if secret_name.startswith('secrets-replicator/names/'):
+    if secret_name.startswith("secrets-replicator/names/"):
         logger.debug(f"Excluded: name mapping secret (prefix: secrets-replicator/names/)")
         return (False, None)
 
     # LAYER 2: Check SECRETS_FILTER configuration
-    secrets_filter = getattr(config, 'secrets_filter', None)
-    secrets_filter_cache_ttl = getattr(config, 'secrets_filter_cache_ttl', 300)
+    secrets_filter = getattr(config, "secrets_filter", None)
+    secrets_filter_cache_ttl = getattr(config, "secrets_filter_cache_ttl", 300)
 
     # If SECRETS_FILTER not configured, allow all secrets with no transformation
     if not secrets_filter:
-        logger.info(f"SECRETS_FILTER not configured - allowing '{secret_name}' without transformation")
+        logger.info(
+            f"SECRETS_FILTER not configured - allowing '{secret_name}' without transformation"
+        )
         return (True, None)
 
     # LAYER 3: Load filters and find matching pattern
@@ -340,7 +350,9 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
 
     if match_result is False:
         # No match found - deny replication
-        logger.info(f"Secret '{secret_name}' does not match any filter pattern - denying replication")
+        logger.info(
+            f"Secret '{secret_name}' does not match any filter pattern - denying replication"
+        )
         return (False, None)
 
     # Match found - match_result is either a transformation name (str) or None
@@ -348,7 +360,9 @@ def should_replicate_secret(secret_name: str, config, client) -> Tuple[bool, Opt
         logger.info(f"Secret '{secret_name}' matched filter - replicating without transformation")
         return (True, None)
     else:
-        logger.info(f"Secret '{secret_name}' matched filter - using transformation '{match_result}'")
+        logger.info(
+            f"Secret '{secret_name}' matched filter - using transformation '{match_result}'"
+        )
         return (True, match_result)
 
 
@@ -374,8 +388,8 @@ def is_system_secret(secret_name: str) -> bool:
     system_prefixes = [
         TRANSFORMATION_SECRET_PREFIX,
         FILTER_SECRET_PREFIX,
-        'secrets-replicator/config/',
-        'secrets-replicator/names/'
+        "secrets-replicator/config/",
+        "secrets-replicator/names/",
     ]
 
     for prefix in system_prefixes:
@@ -387,10 +401,7 @@ def is_system_secret(secret_name: str) -> bool:
 
 
 def get_destination_transformation(
-    secret_name: str,
-    destination,
-    global_config,
-    client
+    secret_name: str, destination, global_config, client
 ) -> Tuple[bool, Optional[str]]:
     """
     Determine if secret should replicate to destination and which transformation to use.
@@ -429,16 +440,18 @@ def get_destination_transformation(
         (False, None)  # Do NOT replicate
     """
     # Get destination-specific filter or fall back to global
-    dest_filters = getattr(destination, 'filters', None)
-    global_filters = getattr(global_config, 'secrets_filter', None)
-    cache_ttl = getattr(global_config, 'secrets_filter_cache_ttl', 300)
+    dest_filters = getattr(destination, "filters", None)
+    global_filters = getattr(global_config, "secrets_filter", None)
+    cache_ttl = getattr(global_config, "secrets_filter_cache_ttl", 300)
 
     # Determine which filter to use
     filter_secret = dest_filters or global_filters
 
     if not filter_secret:
         # No filters configured at all - allow secret, no transformation
-        logger.info(f"No filters configured for destination {destination.region} - allowing '{secret_name}'")
+        logger.info(
+            f"No filters configured for destination {destination.region} - allowing '{secret_name}'"
+        )
         return (True, None)
 
     # Load and check the filter
@@ -449,7 +462,9 @@ def get_destination_transformation(
         return (False, None)
 
     if not filters:
-        logger.warning(f"No filters loaded for destination {destination.region} - denying '{secret_name}'")
+        logger.warning(
+            f"No filters loaded for destination {destination.region} - denying '{secret_name}'"
+        )
         return (False, None)
 
     # Find matching filter pattern
@@ -460,10 +475,14 @@ def get_destination_transformation(
         return (False, None)
 
     if match_result is None:
-        logger.info(f"Secret '{secret_name}' matches filter for {destination.region} - no transformation")
+        logger.info(
+            f"Secret '{secret_name}' matches filter for {destination.region} - no transformation"
+        )
         return (True, None)
 
-    logger.info(f"Secret '{secret_name}' matches filter for {destination.region} - transform: '{match_result}'")
+    logger.info(
+        f"Secret '{secret_name}' matches filter for {destination.region} - transform: '{match_result}'"
+    )
     return (True, match_result)
 
 
@@ -474,10 +493,5 @@ def clear_filter_cache():
     Useful for testing and forcing a cache refresh.
     """
     global _filter_cache
-    _filter_cache = {
-        'data': None,
-        'loaded_at': 0,
-        'ttl': 300,
-        'source_list': None
-    }
+    _filter_cache = {"data": None, "loaded_at": 0, "ttl": 300, "source_list": None}
     logger.info("Filter cache cleared")

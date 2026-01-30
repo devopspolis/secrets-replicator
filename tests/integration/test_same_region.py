@@ -24,12 +24,7 @@ from tests.fixtures.eventbridge_events import (
 class TestSameRegionReplication:
     """Test same-account, same-region replication scenarios."""
 
-    def test_simple_replication_no_transform(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_simple_replication_no_transform(self, secret_helper, aws_region, account_id):
         """Test basic replication without transformation."""
         # Create source secret
         source_value = json.dumps({"username": "testuser", "password": "testpass123"})
@@ -39,13 +34,15 @@ class TestSameRegionReplication:
         dest_name = f"test-dest-{source['Name']}"
 
         # Set up environment for handler
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",  # Disable metrics for testing
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",  # Disable metrics for testing
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -72,19 +69,16 @@ class TestSameRegionReplication:
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_replication_with_sed_transform(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_replication_with_sed_transform(self, secret_helper, aws_region, account_id):
         """Test replication with sed transformations."""
         # Create source secret with values that will be transformed
-        source_value = json.dumps({
-            "environment": "dev",
-            "api_url": "https://api.dev.example.com",
-            "database": "db-dev-01.us-east-1.rds.amazonaws.com"
-        })
+        source_value = json.dumps(
+            {
+                "environment": "dev",
+                "api_url": "https://api.dev.example.com",
+                "database": "db-dev-01.us-east-1.rds.amazonaws.com",
+            }
+        )
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
@@ -100,13 +94,15 @@ s/us-east-1/us-west-2/g
         with open(sedfile_path, "w") as f:
             f.write(sedfile)
 
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -129,33 +125,29 @@ s/us-east-1/us-west-2/g
         if os.path.exists(sedfile_path):
             os.remove(sedfile_path)
 
-    def test_replication_with_json_transform(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_replication_with_json_transform(self, secret_helper, aws_region, account_id):
         """Test replication with JSON transformations."""
         # Create source secret
-        source_value = json.dumps({
-            "environment": "development",
-            "region": "us-east-1",
-            "database": {
-                "host": "db-dev-01.rds.amazonaws.com",
-                "port": 5432
+        source_value = json.dumps(
+            {
+                "environment": "development",
+                "region": "us-east-1",
+                "database": {"host": "db-dev-01.rds.amazonaws.com", "port": 5432},
             }
-        })
+        )
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
         # Set up environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "json",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "json",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -171,12 +163,7 @@ s/us-east-1/us-west-2/g
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_update_existing_secret(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_update_existing_secret(self, secret_helper, aws_region, account_id):
         """Test updating an existing destination secret."""
         # Create source secret
         initial_value = json.dumps({"version": "1.0"})
@@ -187,13 +174,15 @@ s/us-east-1/us-west-2/g
         secret_helper.create_secret(name=dest_name, value=initial_value)
 
         # Set up environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Update source secret
         updated_value = json.dumps({"version": "2.0"})
@@ -223,12 +212,7 @@ s/us-east-1/us-west-2/g
         secret_helper.delete_secret(dest_name, force=True)
 
     @pytest.mark.slow
-    def test_large_secret_replication(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_large_secret_replication(self, secret_helper, aws_region, account_id):
         """Test replication of large secret (near 64KB limit)."""
         # Create a large secret (60KB)
         large_value = "x" * (60 * 1024)
@@ -236,14 +220,16 @@ s/us-east-1/us-west-2/g
         dest_name = f"test-dest-{source['Name']}"
 
         # Set up environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-            "MAX_SECRET_SIZE": "65536",  # 64KB
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+                "MAX_SECRET_SIZE": "65536",  # 64KB
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -267,37 +253,36 @@ s/us-east-1/us-west-2/g
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_secret_with_special_characters(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_secret_with_special_characters(self, secret_helper, aws_region, account_id):
         """Test replication of secrets with special characters."""
         # Create secret with special characters
-        special_value = json.dumps({
-            "password": "P@ssw0rd!#$%^&*()",
-            "unicode": "Hello 世界 🌍",
-            "escaped": "Line1\\nLine2\\tTab"
-        })
+        special_value = json.dumps(
+            {
+                "password": "P@ssw0rd!#$%^&*()",
+                "unicode": "Hello 世界 🌍",
+                "escaped": "Line1\\nLine2\\tTab",
+            }
+        )
         source = secret_helper.create_secret(value=special_value)
         dest_name = f"test-dest-{source['Name']}"
 
         # Set up environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
             event_name="PutSecretValue",
             secret_arn=source["ARN"],
             region=aws_region,
-            account_id=account_id
+            account_id=account_id,
         )
 
         # Invoke handler
@@ -314,12 +299,7 @@ s/us-east-1/us-west-2/g
         # Cleanup
         secret_helper.delete_secret(dest_name, force=True)
 
-    def test_concurrent_replications(
-        self,
-        secret_helper,
-        aws_region,
-        account_id
-    ):
+    def test_concurrent_replications(self, secret_helper, aws_region, account_id):
         """Test multiple concurrent replications."""
         # Create multiple source secrets
         sources = []
@@ -329,12 +309,14 @@ s/us-east-1/us-west-2/g
             sources.append(source)
 
         # Set up environment
-        os.environ.update({
-            "DESTINATION_REGION": aws_region,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": aws_region,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Process each secret
         results = []

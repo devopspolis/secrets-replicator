@@ -17,11 +17,11 @@ from exceptions import (
     AccessDeniedError,
     InvalidRequestError,
     ThrottlingError,
-    InternalServiceError
+    InternalServiceError,
 )
 
 # Initialize module logger
-logger = setup_logger('aws_clients')
+logger = setup_logger("aws_clients")
 
 
 @dataclass
@@ -38,6 +38,7 @@ class SecretValue:
         version_stages: List of version stages (e.g., ['AWSCURRENT'])
         created_date: Creation date
     """
+
     secret_string: Optional[str] = None
     secret_binary: Optional[bytes] = None
     arn: Optional[str] = None
@@ -67,8 +68,13 @@ class SecretsManagerClient:
         secret = client.get_secret('my-secret')
     """
 
-    def __init__(self, region: str, role_arn: Optional[str] = None,
-                 external_id: Optional[str] = None, session_name: Optional[str] = None):
+    def __init__(
+        self,
+        region: str,
+        role_arn: Optional[str] = None,
+        external_id: Optional[str] = None,
+        session_name: Optional[str] = None,
+    ):
         """
         Initialize Secrets Manager client.
 
@@ -84,13 +90,13 @@ class SecretsManagerClient:
         self.region = region
         self.role_arn = role_arn
         self.external_id = external_id
-        self.session_name = session_name or 'secrets-replicator'
+        self.session_name = session_name or "secrets-replicator"
 
         # Initialize client (with or without assumed role)
         if role_arn:
             self._client = self._create_client_with_assumed_role()
         else:
-            self._client = boto3.client('secretsmanager', region_name=region)
+            self._client = boto3.client("secretsmanager", region_name=region)
 
     def _create_client_with_assumed_role(self) -> Any:
         """
@@ -104,44 +110,42 @@ class SecretsManagerClient:
         """
         try:
             # Create STS client
-            sts = boto3.client('sts')
+            sts = boto3.client("sts")
 
             # Build assume role parameters
-            assume_role_params = {
-                'RoleArn': self.role_arn,
-                'RoleSessionName': self.session_name
-            }
+            assume_role_params = {"RoleArn": self.role_arn, "RoleSessionName": self.session_name}
 
             if self.external_id:
-                assume_role_params['ExternalId'] = self.external_id
+                assume_role_params["ExternalId"] = self.external_id
 
             # Assume role
-            logger.info(f'Assuming role: {self.role_arn}')
+            logger.info(f"Assuming role: {self.role_arn}")
             response = sts.assume_role(**assume_role_params)
 
-            credentials = response['Credentials']
+            credentials = response["Credentials"]
 
             # Create client with temporary credentials
             return boto3.client(
-                'secretsmanager',
+                "secretsmanager",
                 region_name=self.region,
-                aws_access_key_id=credentials['AccessKeyId'],
-                aws_secret_access_key=credentials['SecretAccessKey'],
-                aws_session_token=credentials['SessionToken']
+                aws_access_key_id=credentials["AccessKeyId"],
+                aws_secret_access_key=credentials["SecretAccessKey"],
+                aws_session_token=credentials["SessionToken"],
             )
 
         except ClientError as e:
-            error_code = e.response['Error']['Code']
-            error_msg = e.response['Error']['Message']
+            error_code = e.response["Error"]["Code"]
+            error_msg = e.response["Error"]["Message"]
 
-            if error_code == 'AccessDenied':
-                raise AccessDeniedError(f'Failed to assume role {self.role_arn}: {error_msg}')
+            if error_code == "AccessDenied":
+                raise AccessDeniedError(f"Failed to assume role {self.role_arn}: {error_msg}")
             else:
-                raise AWSClientError(f'STS error: {error_msg}')
+                raise AWSClientError(f"STS error: {error_msg}")
 
     @with_retries(max_attempts=5, min_wait=2, max_wait=32)
-    def get_secret(self, secret_id: str, version_id: Optional[str] = None,
-                   version_stage: Optional[str] = None) -> SecretValue:
+    def get_secret(
+        self, secret_id: str, version_id: Optional[str] = None, version_stage: Optional[str] = None
+    ) -> SecretValue:
         """
         Retrieve a secret value from Secrets Manager.
 
@@ -171,35 +175,39 @@ class SecretsManagerClient:
         """
         try:
             # Build request parameters
-            params = {'SecretId': secret_id}
+            params = {"SecretId": secret_id}
 
             if version_id:
-                params['VersionId'] = version_id
+                params["VersionId"] = version_id
             elif version_stage:
-                params['VersionStage'] = version_stage
+                params["VersionStage"] = version_stage
 
             # Get secret value
             response = self._client.get_secret_value(**params)
 
             # Extract secret value and metadata
             return SecretValue(
-                secret_string=response.get('SecretString'),
-                secret_binary=response.get('SecretBinary'),
-                arn=response.get('ARN'),
-                name=response.get('Name'),
-                version_id=response.get('VersionId'),
-                version_stages=response.get('VersionStages', []),
-                created_date=response.get('CreatedDate')
+                secret_string=response.get("SecretString"),
+                secret_binary=response.get("SecretBinary"),
+                arn=response.get("ARN"),
+                name=response.get("Name"),
+                version_id=response.get("VersionId"),
+                version_stages=response.get("VersionStages", []),
+                created_date=response.get("CreatedDate"),
             )
 
         except ClientError as e:
-            self._handle_client_error(e, f'get_secret({secret_id})')
+            self._handle_client_error(e, f"get_secret({secret_id})")
 
     @with_retries(max_attempts=5, min_wait=2, max_wait=32)
-    def put_secret(self, secret_id: str, secret_value: str,
-                   kms_key_id: Optional[str] = None,
-                   description: Optional[str] = None,
-                   tags: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def put_secret(
+        self,
+        secret_id: str,
+        secret_value: str,
+        kms_key_id: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Create or update a secret in Secrets Manager.
 
@@ -235,47 +243,38 @@ class SecretsManagerClient:
 
             if exists:
                 # Update existing secret value
-                params = {
-                    'SecretId': secret_id,
-                    'SecretString': secret_value
-                }
+                params = {"SecretId": secret_id, "SecretString": secret_value}
 
                 response = self._client.put_secret_value(**params)
 
                 # Update description if provided (requires separate API call)
                 if description is not None:
-                    self._client.update_secret(
-                        SecretId=secret_id,
-                        Description=description
-                    )
+                    self._client.update_secret(SecretId=secret_id, Description=description)
 
             else:
                 # Create new secret
-                params = {
-                    'Name': secret_id,
-                    'SecretString': secret_value
-                }
+                params = {"Name": secret_id, "SecretString": secret_value}
 
                 if kms_key_id:
-                    params['KmsKeyId'] = kms_key_id
+                    params["KmsKeyId"] = kms_key_id
 
                 if description:
-                    params['Description'] = description
+                    params["Description"] = description
 
                 if tags:
                     # Convert dict to list of {Key, Value} dicts
-                    params['Tags'] = [{'Key': k, 'Value': v} for k, v in tags.items()]
+                    params["Tags"] = [{"Key": k, "Value": v} for k, v in tags.items()]
 
                 response = self._client.create_secret(**params)
 
             return {
-                'ARN': response.get('ARN'),
-                'Name': response.get('Name'),
-                'VersionId': response.get('VersionId')
+                "ARN": response.get("ARN"),
+                "Name": response.get("Name"),
+                "VersionId": response.get("VersionId"),
             }
 
         except ClientError as e:
-            self._handle_client_error(e, f'put_secret({secret_id})')
+            self._handle_client_error(e, f"put_secret({secret_id})")
 
     @with_retries(max_attempts=5, min_wait=2, max_wait=32)
     def secret_exists(self, secret_id: str) -> bool:
@@ -300,10 +299,10 @@ class SecretsManagerClient:
             self._client.describe_secret(SecretId=secret_id)
             return True
         except ClientError as e:
-            if e.response['Error']['Code'] == 'ResourceNotFoundException':
+            if e.response["Error"]["Code"] == "ResourceNotFoundException":
                 return False
             # Re-raise other errors
-            self._handle_client_error(e, f'secret_exists({secret_id})')
+            self._handle_client_error(e, f"secret_exists({secret_id})")
 
     def get_secret_tags(self, secret_id: str) -> Dict[str, str]:
         """
@@ -328,10 +327,10 @@ class SecretsManagerClient:
         """
         try:
             response = self._client.describe_secret(SecretId=secret_id)
-            tags_list = response.get('Tags', [])
-            return {tag['Key']: tag['Value'] for tag in tags_list}
+            tags_list = response.get("Tags", [])
+            return {tag["Key"]: tag["Value"] for tag in tags_list}
         except ClientError as e:
-            self._handle_client_error(e, f'get_secret_tags({secret_id})')
+            self._handle_client_error(e, f"get_secret_tags({secret_id})")
 
     def get_secret_description(self, secret_id: str) -> Optional[str]:
         """
@@ -356,9 +355,9 @@ class SecretsManagerClient:
         """
         try:
             response = self._client.describe_secret(SecretId=secret_id)
-            return response.get('Description')
+            return response.get("Description")
         except ClientError as e:
-            self._handle_client_error(e, f'get_secret_description({secret_id})')
+            self._handle_client_error(e, f"get_secret_description({secret_id})")
 
     def _handle_client_error(self, error: ClientError, operation: str) -> None:
         """
@@ -376,26 +375,26 @@ class SecretsManagerClient:
             InternalServiceError: For InternalServiceError
             AWSClientError: For other errors
         """
-        error_code = error.response['Error']['Code']
-        error_msg = error.response['Error']['Message']
+        error_code = error.response["Error"]["Code"]
+        error_msg = error.response["Error"]["Message"]
 
         # Map AWS error codes to custom exceptions
         error_mapping = {
-            'ResourceNotFoundException': SecretNotFoundError,
-            'AccessDeniedException': AccessDeniedError,
-            'InvalidRequestException': InvalidRequestError,
-            'InvalidParameterException': InvalidRequestError,
-            'ThrottlingException': ThrottlingError,
-            'InternalServiceError': InternalServiceError,
+            "ResourceNotFoundException": SecretNotFoundError,
+            "AccessDeniedException": AccessDeniedError,
+            "InvalidRequestException": InvalidRequestError,
+            "InvalidParameterException": InvalidRequestError,
+            "ThrottlingException": ThrottlingError,
+            "InternalServiceError": InternalServiceError,
         }
 
         exception_class = error_mapping.get(error_code, AWSClientError)
-        raise exception_class(f'{operation} failed: {error_msg}')
+        raise exception_class(f"{operation} failed: {error_msg}")
 
 
-def create_secrets_manager_client(region: str,
-                                  role_arn: Optional[str] = None,
-                                  external_id: Optional[str] = None) -> SecretsManagerClient:
+def create_secrets_manager_client(
+    region: str, role_arn: Optional[str] = None, external_id: Optional[str] = None
+) -> SecretsManagerClient:
     """
     Factory function to create a SecretsManagerClient.
 

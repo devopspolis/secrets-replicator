@@ -23,31 +23,30 @@ class TestCrossRegionReplication:
     """Test cross-region secret replication scenarios."""
 
     def test_basic_cross_region_replication(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Test basic replication from one region to another."""
         # Create source secret in source region
-        source_value = json.dumps({
-            "environment": "production",
-            "region": aws_region,
-            "database": f"db-prod.{aws_region}.rds.amazonaws.com"
-        })
+        source_value = json.dumps(
+            {
+                "environment": "production",
+                "region": aws_region,
+                "database": f"db-prod.{aws_region}.rds.amazonaws.com",
+            }
+        )
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
         # Set up environment for cross-region replication
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -74,41 +73,41 @@ class TestCrossRegionReplication:
         dest_secret_helper.delete_secret(dest_name, force=True)
 
     def test_cross_region_with_transformation(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id,
-        sample_sedfile
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id, sample_sedfile
     ):
         """Test cross-region replication with sed transformation."""
         # Create source secret with region-specific values
-        source_value = json.dumps({
-            "region": "us-east-1",
-            "endpoint": "https://api.us-east-1.amazonaws.com",
-            "database": "db-prod.us-east-1.rds.amazonaws.com"
-        })
+        source_value = json.dumps(
+            {
+                "region": "us-east-1",
+                "endpoint": "https://api.us-east-1.amazonaws.com",
+                "database": "db-prod.us-east-1.rds.amazonaws.com",
+            }
+        )
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
         # Expected transformed value
-        expected_value = json.dumps({
-            "region": "us-west-2",
-            "endpoint": "https://api.us-west-2.amazonaws.com",
-            "database": "db-prod.us-west-2.rds.amazonaws.com"
-        })
+        expected_value = json.dumps(
+            {
+                "region": "us-west-2",
+                "endpoint": "https://api.us-west-2.amazonaws.com",
+                "database": "db-prod.us-west-2.rds.amazonaws.com",
+            }
+        )
 
         # TODO: Set up transformation secret with sed script
         # For now, test without transformation
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -131,12 +130,7 @@ class TestCrossRegionReplication:
 
     @pytest.mark.slow
     def test_cross_region_latency(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Test and measure cross-region replication latency."""
         import time
@@ -146,20 +140,22 @@ class TestCrossRegionReplication:
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Create test event
         event = create_test_event(
             event_name="PutSecretValue",
             secret_arn=source["ARN"],
             region=aws_region,
-            account_id=account_id
+            account_id=account_id,
         )
 
         # Measure replication time
@@ -185,12 +181,7 @@ class TestCrossRegionReplication:
         assert duration < 5.0, f"Cross-region replication too slow: {duration:.2f}s"
 
     def test_cross_region_update(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Test updating an existing cross-region secret."""
         # Create initial secrets in both regions
@@ -199,13 +190,15 @@ class TestCrossRegionReplication:
         dest_name = f"test-dest-{source['Name']}"
         dest_secret_helper.create_secret(name=dest_name, value=initial_value)
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Update source secret
         updated_value = json.dumps({"version": "2.0"})
@@ -233,12 +226,7 @@ class TestCrossRegionReplication:
         dest_secret_helper.delete_secret(dest_name, force=True)
 
     def test_cross_region_kms_encryption(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Test cross-region replication with KMS encryption."""
         # Note: This test requires KMS keys in both regions
@@ -248,14 +236,16 @@ class TestCrossRegionReplication:
         source = secret_helper.create_secret(value=source_value)
         dest_name = f"test-dest-{source['Name']}"
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "DESTINATION_SECRET_NAME": dest_name,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-            # "KMS_KEY_ID": "alias/aws/secretsmanager",  # Use default key
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "DESTINATION_SECRET_NAME": dest_name,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+                # "KMS_KEY_ID": "alias/aws/secretsmanager",  # Use default key
+            }
+        )
 
         # Create test event
         event = create_test_event(
@@ -278,12 +268,7 @@ class TestCrossRegionReplication:
         dest_secret_helper.delete_secret(dest_name, force=True)
 
     def test_multiple_region_pairs(
-        self,
-        secret_helper,
-        dest_secret_helper,
-        aws_region,
-        dest_region,
-        account_id
+        self, secret_helper, dest_secret_helper, aws_region, dest_region, account_id
     ):
         """Test replication with multiple source secrets to same destination region."""
         secrets = []
@@ -294,12 +279,14 @@ class TestCrossRegionReplication:
             source = secret_helper.create_secret(value=value)
             secrets.append(source)
 
-        os.environ.update({
-            "DESTINATION_REGION": dest_region,
-            "TRANSFORM_MODE": "sed",
-            "LOG_LEVEL": "DEBUG",
-            "ENABLE_METRICS": "false",
-        })
+        os.environ.update(
+            {
+                "DESTINATION_REGION": dest_region,
+                "TRANSFORM_MODE": "sed",
+                "LOG_LEVEL": "DEBUG",
+                "ENABLE_METRICS": "false",
+            }
+        )
 
         # Replicate each secret
         for source in secrets:

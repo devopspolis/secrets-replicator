@@ -33,31 +33,22 @@ def _setup_default_secrets():
     - secrets-replicator/filters/default: Default filter mapping
     - secrets-replicator/transformations/region-swap: Default transformation
     """
-    sm = boto3.client('secretsmanager', region_name='us-east-1')
+    sm = boto3.client("secretsmanager", region_name="us-east-1")
 
     # Default destinations configuration
-    destinations_config = json.dumps([
-        {
-            "region": "us-west-2",
-            "filters": "secrets-replicator/filters/default"
-        }
-    ])
+    destinations_config = json.dumps(
+        [{"region": "us-west-2", "filters": "secrets-replicator/filters/default"}]
+    )
     sm.create_secret(
-        Name='secrets-replicator/config/destinations',
-        SecretString=destinations_config
+        Name="secrets-replicator/config/destinations", SecretString=destinations_config
     )
 
     # Default filters
-    filters_config = json.dumps({
-        "*": "region-swap"  # Apply region-swap to all secrets
-    })
-    sm.create_secret(
-        Name='secrets-replicator/filters/default',
-        SecretString=filters_config
-    )
+    filters_config = json.dumps({"*": "region-swap"})  # Apply region-swap to all secrets
+    sm.create_secret(Name="secrets-replicator/filters/default", SecretString=filters_config)
 
     # Default transformation
     sm.create_secret(
-        Name='secrets-replicator/transformations/region-swap',
-        SecretString='s/us-east-1/us-west-2/g'
+        Name="secrets-replicator/transformations/region-swap",
+        SecretString="s/us-east-1/us-west-2/g",
     )

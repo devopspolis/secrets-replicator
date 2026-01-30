@@ -32,27 +32,46 @@ class JsonFormatter(logging.Formatter):
         """
         # Base log entry
         log_entry = {
-            'timestamp': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            'level': record.levelname,
-            'message': record.getMessage(),
-            'logger': record.name,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name,
         }
 
         # Add context if available
-        if hasattr(record, 'context'):
-            log_entry['context'] = record.context
+        if hasattr(record, "context"):
+            log_entry["context"] = record.context
 
         # Add exception info if present
         if record.exc_info:
-            log_entry['exception'] = self.formatException(record.exc_info)
+            log_entry["exception"] = self.formatException(record.exc_info)
 
         # Add extra fields
         for key, value in record.__dict__.items():
-            if key not in ['name', 'msg', 'args', 'created', 'filename', 'funcName',
-                          'levelname', 'levelno', 'lineno', 'module', 'msecs',
-                          'message', 'pathname', 'process', 'processName',
-                          'relativeCreated', 'thread', 'threadName', 'exc_info',
-                          'exc_text', 'stack_info', 'context']:
+            if key not in [
+                "name",
+                "msg",
+                "args",
+                "created",
+                "filename",
+                "funcName",
+                "levelname",
+                "levelno",
+                "lineno",
+                "module",
+                "msecs",
+                "message",
+                "pathname",
+                "process",
+                "processName",
+                "relativeCreated",
+                "thread",
+                "threadName",
+                "exc_info",
+                "exc_text",
+                "stack_info",
+                "context",
+            ]:
                 log_entry[key] = value
 
         # Sanitize the entire log entry (convert to string, sanitize, parse back)
@@ -62,9 +81,9 @@ class JsonFormatter(logging.Formatter):
         return sanitized_json
 
 
-def setup_logger(name: str = 'secrets-replicator',
-                 level: str = 'INFO',
-                 use_json: bool = True) -> logging.Logger:
+def setup_logger(
+    name: str = "secrets-replicator", level: str = "INFO", use_json: bool = True
+) -> logging.Logger:
     """
     Setup a logger with JSON formatting.
 
@@ -97,9 +116,7 @@ def setup_logger(name: str = 'secrets-replicator',
     if use_json:
         formatter = JsonFormatter()
     else:
-        formatter = logging.Formatter(
-            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     handler.setFormatter(formatter)
     logger.addHandler(handler)
@@ -155,10 +172,7 @@ class LogContext:
             logging.setLogRecordFactory(self.old_factory)
 
 
-def log_event(logger: logging.Logger,
-              level: str,
-              message: str,
-              **context):
+def log_event(logger: logging.Logger, level: str, message: str, **context):
     """
     Log a message with context.
 
@@ -176,16 +190,18 @@ def log_event(logger: logging.Logger,
     log_level = getattr(logging, level.upper(), logging.INFO)
 
     # Create log record with context
-    extra = {'context': context}
+    extra = {"context": context}
     logger.log(log_level, message, extra=extra)
 
 
-def log_secret_operation(logger: logging.Logger,
-                         operation: str,
-                         secret_id: str,
-                         secret_arn: Optional[str] = None,
-                         version_id: Optional[str] = None,
-                         **extra_context):
+def log_secret_operation(
+    logger: logging.Logger,
+    operation: str,
+    secret_id: str,
+    secret_arn: Optional[str] = None,
+    version_id: Optional[str] = None,
+    **extra_context,
+):
     """
     Log a secret operation with metadata (never logs secret value).
 
@@ -203,26 +219,28 @@ def log_secret_operation(logger: logging.Logger,
         ...                     secret_arn='arn:...', version_id='v1')
     """
     context = {
-        'operation': operation,
-        'secret_id': mask_secret(secret_id, show_chars=6) if len(secret_id) > 20 else secret_id,
-        **extra_context
+        "operation": operation,
+        "secret_id": mask_secret(secret_id, show_chars=6) if len(secret_id) > 20 else secret_id,
+        **extra_context,
     }
 
     if secret_arn:
-        context['secret_arn'] = secret_arn
+        context["secret_arn"] = secret_arn
 
     if version_id:
-        context['version_id'] = version_id
+        context["version_id"] = version_id
 
-    log_event(logger, 'INFO', f'Secret operation: {operation}', **context)
+    log_event(logger, "INFO", f"Secret operation: {operation}", **context)
 
 
-def log_transformation(logger: logging.Logger,
-                      mode: str,
-                      rules_count: int,
-                      input_size: int,
-                      output_size: int,
-                      duration_ms: float):
+def log_transformation(
+    logger: logging.Logger,
+    mode: str,
+    rules_count: int,
+    input_size: int,
+    output_size: int,
+    duration_ms: float,
+):
     """
     Log transformation metrics.
 
@@ -239,24 +257,26 @@ def log_transformation(logger: logging.Logger,
         >>> log_transformation(logger, 'sed', 3, 1024, 1024, 15.5)
     """
     context = {
-        'mode': mode,
-        'rules_count': rules_count,
-        'input_size': input_size,
-        'output_size': output_size,
-        'duration_ms': round(duration_ms, 2),
-        'size_change': output_size - input_size
+        "mode": mode,
+        "rules_count": rules_count,
+        "input_size": input_size,
+        "output_size": output_size,
+        "duration_ms": round(duration_ms, 2),
+        "size_change": output_size - input_size,
     }
 
-    log_event(logger, 'INFO', 'Transformation completed', **context)
+    log_event(logger, "INFO", "Transformation completed", **context)
 
 
-def log_replication(logger: logging.Logger,
-                   source_region: str,
-                   dest_region: str,
-                   secret_id: str,
-                   success: bool,
-                   duration_ms: float,
-                   error: Optional[str] = None):
+def log_replication(
+    logger: logging.Logger,
+    source_region: str,
+    dest_region: str,
+    secret_id: str,
+    success: bool,
+    duration_ms: float,
+    error: Optional[str] = None,
+):
     """
     Log replication result.
 
@@ -275,25 +295,23 @@ def log_replication(logger: logging.Logger,
         ...                'my-secret', True, 234.5)
     """
     context = {
-        'source_region': source_region,
-        'dest_region': dest_region,
-        'secret_id': secret_id,
-        'success': success,
-        'duration_ms': round(duration_ms, 2)
+        "source_region": source_region,
+        "dest_region": dest_region,
+        "secret_id": secret_id,
+        "success": success,
+        "duration_ms": round(duration_ms, 2),
     }
 
     if error:
-        context['error'] = error
+        context["error"] = error
 
-    level = 'INFO' if success else 'ERROR'
-    message = 'Replication succeeded' if success else 'Replication failed'
+    level = "INFO" if success else "ERROR"
+    message = "Replication succeeded" if success else "Replication failed"
 
     log_event(logger, level, message, **context)
 
 
-def log_error(logger: logging.Logger,
-              error: Exception,
-              context: Optional[Dict[str, Any]] = None):
+def log_error(logger: logging.Logger, error: Exception, context: Optional[Dict[str, Any]] = None):
     """
     Log an error with context.
 
@@ -310,12 +328,12 @@ def log_error(logger: logging.Logger,
         ...     log_error(logger, e, {'secret_id': 'my-secret'})
     """
     error_context = {
-        'error_type': type(error).__name__,
-        'error_message': str(error),
-        **(context or {})
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        **(context or {}),
     }
 
-    log_event(logger, 'ERROR', f'Error occurred: {error}', **error_context)
+    log_event(logger, "ERROR", f"Error occurred: {error}", **error_context)
 
 
 # Global logger instance
