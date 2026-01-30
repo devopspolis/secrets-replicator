@@ -18,7 +18,6 @@ from botocore.exceptions import ClientError
 
 from config import TRANSFORMATION_SECRET_PREFIX, FILTER_SECRET_PREFIX
 
-
 logger = logging.getLogger(__name__)
 
 

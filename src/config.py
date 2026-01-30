@@ -9,7 +9,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 
-
 # Hardcoded prefixes for security and consistency
 TRANSFORMATION_SECRET_PREFIX = "secrets-replicator/transformations/"
 FILTER_SECRET_PREFIX = "secrets-replicator/filters/"

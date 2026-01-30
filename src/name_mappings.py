@@ -16,7 +16,6 @@ from botocore.exceptions import ClientError
 
 from config import NAME_MAPPING_PREFIX
 
-
 logger = logging.getLogger(__name__)
 
 
