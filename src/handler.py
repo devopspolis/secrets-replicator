@@ -312,7 +312,9 @@ def process_single_secret(secret_event, config, logger, metrics, start_time) -> 
 
         try:
             dest_client = create_secrets_manager_client(
-                region=destination.region, role_arn=destination.account_role_arn
+                region=destination.region,
+                role_arn=destination.account_role_arn,
+                external_id=destination.external_id,
             )
 
             # Determine destination secret name using name mapping lookup

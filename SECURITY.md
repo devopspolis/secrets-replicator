@@ -18,7 +18,7 @@ Secrets Replicator is designed with security as a top priority:
 3. **Encryption in Transit**: All AWS API calls use TLS 1.2+
 4. **Encryption at Rest**: Secrets encrypted with AWS KMS
 5. **Audit Trail**: All operations logged in CloudTrail
-6. **External ID**: Cross-account access requires External ID
+6. **External ID**: External ID supported for cross-account AssumeRole
 7. **Input Validation**: All inputs validated and sanitized
 
 ## Security Features
@@ -47,7 +47,7 @@ Secrets Replicator is designed with security as a top priority:
 
 - **Scoped Permissions**: All IAM policies scoped to specific resources
 - **Condition Keys**: KMS policies use condition keys (kms:ViaService)
-- **External ID**: Required for cross-account AssumeRole
+- **External ID**: Supported for cross-account AssumeRole (set `external_id` on the destination config)
 - **Session Tagging**: AssumeRole uses session naming for traceability
 
 ## Reporting a Vulnerability
@@ -60,8 +60,8 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 
 Instead, report via one of these methods:
 
-1. **Email**: Send details to devopspolis@example.com with subject "SECURITY"
-2. **GitHub Security Advisory**: Use GitHub's private vulnerability reporting feature
+1. **GitHub Security Advisory** (preferred): Use [private vulnerability reporting](https://github.com/devopspolis/secrets-replicator/security/advisories/new) on this repository
+2. **Email**: Send details to security@devopspolis.com with subject "SECURITY secrets-replicator"
 
 ### What to Include
 
@@ -186,7 +186,7 @@ Secrets Replicator undergoes regular security audits:
 **Risk**: Incorrect trust policies could grant unauthorized access
 
 **Mitigation**:
-- External ID required for cross-account access
+- External ID supported for cross-account access (configure `external_id` on the destination)
 - Trust policies scoped to specific roles
 - Session naming for traceability
 
@@ -238,7 +238,7 @@ Secrets Replicator supports compliance with:
 
 For security-related questions (not vulnerabilities):
 
-- **Email**: devopspolis@example.com
+- **Email**: security@devopspolis.com
 - **GitHub Discussions**: https://github.com/devopspolis/secrets-replicator/discussions
 
 For vulnerabilities, use the [reporting process](#reporting-a-vulnerability) above.

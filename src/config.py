@@ -28,6 +28,7 @@ class DestinationConfig:
 
     region: str  # Destination AWS region
     account_role_arn: Optional[str] = None  # Role ARN for cross-account (if different account)
+    external_id: Optional[str] = None  # External ID for sts:AssumeRole (confused-deputy protection)
     secret_names: Optional[str] = None  # Comma-separated list of name mapping secret names
     secret_names_cache_ttl: int = 300  # Cache TTL for name mappings (seconds)
     kms_key_id: Optional[str] = None  # KMS key ID for encryption (optional)
@@ -360,6 +361,7 @@ def load_destinations(config: ReplicatorConfig, secrets_manager_client) -> None:
                 region=dest_data.get("region", ""),
                 account_role_arn=dest_data.get("account_role_arn")
                 or dest_data.get("accountRoleArn"),
+                external_id=dest_data.get("external_id") or dest_data.get("externalId"),
                 secret_names=dest_data.get("secret_names") or dest_data.get("secretNames"),
                 secret_names_cache_ttl=dest_data.get("secret_names_cache_ttl")
                 or dest_data.get("secretNamesCacheTTL")
