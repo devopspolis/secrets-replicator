@@ -2,9 +2,17 @@
 Unit tests for config module
 """
 
+import json
 import os
+from unittest.mock import MagicMock
 import pytest
-from config import ReplicatorConfig, DestinationConfig, ConfigurationError, load_config_from_env
+from config import (
+    ReplicatorConfig,
+    DestinationConfig,
+    ConfigurationError,
+    load_config_from_env,
+    load_destinations,
+)
 
 
 class TestDestinationConfig:
@@ -15,10 +23,21 @@ class TestDestinationConfig:
         dest = DestinationConfig(region="us-west-2")
         assert dest.region == "us-west-2"
         assert dest.account_role_arn is None
+        assert dest.external_id is None
         assert dest.secret_names is None
         assert dest.secret_names_cache_ttl == 300  # Default
         assert dest.kms_key_id is None
         assert dest.variables is None
+
+    def test_destination_with_external_id(self):
+        """Test cross-account destination with ExternalId for confused-deputy protection"""
+        dest = DestinationConfig(
+            region="us-west-2",
+            account_role_arn="arn:aws:iam::999:role/MyRole",
+            external_id="unique-external-id-123",
+        )
+        assert dest.account_role_arn == "arn:aws:iam::999:role/MyRole"
+        assert dest.external_id == "unique-external-id-123"
 
     def test_destination_with_all_fields(self):
         """Test creating destination config with all fields"""
@@ -278,6 +297,64 @@ class TestLoadConfigFromEnv:
         assert config.timeout_seconds == 15
         assert config.max_secret_size == 10000
         assert config.secret_names_cache_ttl == 600
+
+
+class TestLoadDestinations:
+    """Tests for load_destinations parsing of the destinations config secret"""
+
+    @staticmethod
+    def _mock_client(destinations_json):
+        client = MagicMock()
+        client.get_secret.return_value = MagicMock(secret_string=destinations_json)
+        return client
+
+    def test_parses_external_id_snake_case(self):
+        """external_id from JSON is loaded onto the DestinationConfig"""
+        config = ReplicatorConfig(destinations=[])
+        client = self._mock_client(
+            json.dumps(
+                [
+                    {
+                        "region": "us-west-2",
+                        "account_role_arn": "arn:aws:iam::999:role/Dest",
+                        "external_id": "snake-case-id",
+                    }
+                ]
+            )
+        )
+
+        load_destinations(config, client)
+
+        assert len(config.destinations) == 1
+        assert config.destinations[0].external_id == "snake-case-id"
+
+    def test_parses_external_id_camel_case(self):
+        """externalId (camelCase) is accepted for parity with AWS naming"""
+        config = ReplicatorConfig(destinations=[])
+        client = self._mock_client(
+            json.dumps(
+                [
+                    {
+                        "region": "us-west-2",
+                        "accountRoleArn": "arn:aws:iam::999:role/Dest",
+                        "externalId": "camel-case-id",
+                    }
+                ]
+            )
+        )
+
+        load_destinations(config, client)
+
+        assert config.destinations[0].external_id == "camel-case-id"
+
+    def test_external_id_absent_yields_none(self):
+        """Destination without external_id leaves the field None (backwards-compatible)"""
+        config = ReplicatorConfig(destinations=[])
+        client = self._mock_client(json.dumps([{"region": "us-west-2"}]))
+
+        load_destinations(config, client)
+
+        assert config.destinations[0].external_id is None
 
 
 class TestEdgeCases:
