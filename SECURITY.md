@@ -247,7 +247,8 @@ For vulnerabilities, use the [reporting process](#reporting-a-vulnerability) abo
 
 We thank the following security researchers for responsible disclosure:
 
-- *None yet*
+- **Chang Li**, [Xidian University](https://www.xidian.edu.cn/) — <25151213672@stu.xidian.edu.cn>
+  - v0.5.0: ExternalId not propagated to STS AssumeRole in cross-account replication path. Fixed in [b422394](https://github.com/devopspolis/secrets-replicator/commit/b422394).
 
 ---
 
