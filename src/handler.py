@@ -319,9 +319,9 @@ def process_single_secret(secret_event, config, logger, metrics, start_time) -> 
 
             # Determine destination secret name using name mapping lookup
             # Returns None if secret doesn't match any pattern (filtering behavior)
-            dest_secret_name = get_destination_name(
-                secret_event.secret_id, destination, source_client
-            )
+            # Use the friendly name, not secret_event.secret_id: EventBridge events
+            # carry the full ARN, which must not become the destination secret name
+            dest_secret_name = get_destination_name(secret_name, destination, source_client)
 
             # If None returned, secret doesn't match secret_names filter - skip this destination
             if dest_secret_name is None:
@@ -379,7 +379,7 @@ def process_single_secret(secret_event, config, logger, metrics, start_time) -> 
                 continue
 
             # Log if name mapping was used
-            if dest_secret_name != secret_event.secret_id:
+            if dest_secret_name != secret_name:
                 log_event(
                     logger,
                     "INFO",
