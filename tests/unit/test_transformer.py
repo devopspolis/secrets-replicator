@@ -121,7 +121,7 @@ class TestParseSedfile:
     def test_parse_invalid_format(self):
         """Test that invalid format raises error"""
         content = "invalid rule format"
-        with pytest.raises(TransformationError, match="must start with 's/'"):
+        with pytest.raises(TransformationError, match="must start with 's'"):
             parse_sedfile(content)
 
     def test_parse_incomplete_rule(self):
@@ -136,6 +136,80 @@ class TestParseSedfile:
         rules = parse_sedfile(content)
         assert len(rules) == 1
         assert rules[0].pattern == r"\d+\.\d+\.\d+\.\d+"
+
+    def test_parse_hash_delimiter(self):
+        """Test parsing sed rule with # as delimiter"""
+        content = "s#us-east-1#us-west-2#g"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        assert rules[0].pattern == "us-east-1"
+        assert rules[0].replacement == "us-west-2"
+        assert rules[0].global_replace is True
+
+    def test_parse_pipe_delimiter(self):
+        """Test parsing sed rule with | as delimiter"""
+        content = "s|old-value|new-value|"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        assert rules[0].pattern == "old-value"
+        assert rules[0].replacement == "new-value"
+
+    def test_parse_hash_delimiter_with_slashes(self):
+        """Test that alternate delimiters allow literal slashes in pattern and replacement"""
+        content = "s#http://old.example.com#https://new.example.com#g"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        assert rules[0].pattern == "http://old.example.com"
+        assert rules[0].replacement == "https://new.example.com"
+
+    def test_parse_escaped_delimiter_in_pattern(self):
+        """Test that an escaped delimiter in the pattern does not split the rule"""
+        content = r"s/path\/to\/old/new/g"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        # Escapes are preserved in the pattern; regex treats \/ as literal /
+        assert rules[0].pattern == r"path\/to\/old"
+        assert rules[0].replacement == "new"
+
+    def test_parse_escaped_delimiter_in_replacement(self):
+        """Test that an escaped delimiter in the replacement is unescaped"""
+        content = r"s/old/path\/to\/new/g"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        assert rules[0].pattern == "old"
+        assert rules[0].replacement == "path/to/new"
+
+    def test_parse_escaped_hash_delimiter(self):
+        """Test escaped # delimiter with # as the delimiter character"""
+        content = r"s#issue \#1#issue \#2#g"
+        rules = parse_sedfile(content)
+        assert len(rules) == 1
+        assert rules[0].pattern == r"issue \#1"
+        assert rules[0].replacement == "issue #2"
+
+    def test_parse_too_many_delimiters(self):
+        """Test that unescaped extra delimiters raise instead of silently misparsing"""
+        content = "s/http://old/http://new/g"
+        with pytest.raises(TransformationError, match="Too many"):
+            parse_sedfile(content)
+
+    def test_parse_unknown_flag(self):
+        """Test that an unknown flag raises error"""
+        content = "s/old/new/x"
+        with pytest.raises(TransformationError, match="Unknown sed flag"):
+            parse_sedfile(content)
+
+    def test_parse_invalid_delimiter(self):
+        """Test that alphanumeric delimiters are rejected"""
+        content = "sXoldXnewXg"
+        with pytest.raises(TransformationError, match="Invalid sed delimiter"):
+            parse_sedfile(content)
+
+    def test_apply_rule_with_hash_delimiter(self):
+        """End-to-end: transform a URL-containing secret using # delimiter"""
+        rules = parse_sedfile("s#db.us-east-1.example.com/prod#db.us-west-2.example.com/prod#g")
+        result = apply_sed_transforms('{"url": "postgres://db.us-east-1.example.com/prod"}', rules)
+        assert result == '{"url": "postgres://db.us-west-2.example.com/prod"}'
 
 
 class TestApplySedTransforms:

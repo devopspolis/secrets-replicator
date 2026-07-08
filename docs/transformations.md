@@ -852,7 +852,8 @@ See the following example files for complete working examples:
 
 ### Basic Syntax
 
-Sed transformations use standard GNU sed syntax.
+Sed transformations support the sed substitution command. Patterns use
+Python regular expression syntax.
 
 #### Substitution Command
 
@@ -860,18 +861,36 @@ Sed transformations use standard GNU sed syntax.
 s/pattern/replacement/flags
 ```
 
-**Flags**:
-- `g` - Global replacement (all occurrences)
-- `i` - Case-insensitive matching
-- `1`, `2`, `3`, ... - Replace only nth occurrence
-
-#### Delete Command
+Like sed, the delimiter is the character immediately after `s` and can be
+any punctuation character — not just `/`:
 
 ```bash
-/pattern/d
+s#pattern#replacement#flags
+s|pattern|replacement|flags
 ```
 
-Delete lines matching the pattern.
+Use an alternate delimiter when the pattern or replacement contains slashes
+(URLs, file paths), or escape the delimiter with a backslash:
+
+```bash
+# Alternate delimiter (recommended for URLs)
+s#http://old.example.com#https://new.example.com#g
+
+# Escaped delimiter (equivalent)
+s/http:\/\/old.example.com/https:\/\/new.example.com/g
+```
+
+An unescaped delimiter appearing more than three times in a rule is an
+error — escape it or choose a delimiter that doesn't occur in your pattern
+or replacement.
+
+**Flags**:
+- `g` - Global replacement (all occurrences; without it, only the first occurrence is replaced)
+- `i` - Case-insensitive matching
+- `m` - Multiline mode (`^` and `$` match line boundaries)
+- `s` - Dotall mode (`.` matches newlines)
+
+Unknown flags are rejected with an error.
 
 #### Examples
 
@@ -890,9 +909,9 @@ s/dev/prod/g
 s/dev/prod/gi
 ```
 
-**Delete lines containing "debug"**:
+**URL replacement using `#` delimiter**:
 ```bash
-/debug/d
+s#postgres://db.us-east-1.example.com#postgres://db.us-west-2.example.com#g
 ```
 
 ---

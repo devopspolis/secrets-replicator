@@ -198,18 +198,72 @@ def expand_variables(text: str, context: Dict[str, str]) -> str:
 
 
 # Sed-style transformations
+def _split_sed_rule(body: str, delimiter: str) -> List[str]:
+    """
+    Split a sed rule body on its delimiter, honoring backslash escapes.
+
+    A backslash escapes the following character, so an escaped delimiter
+    (e.g. '\\/' with delimiter '/') does not split the rule. Escape
+    sequences are preserved in the returned parts.
+    """
+    parts = []
+    current: List[str] = []
+    i = 0
+    while i < len(body):
+        char = body[i]
+        if char == "\\" and i + 1 < len(body):
+            current.append(char)
+            current.append(body[i + 1])
+            i += 2
+        elif char == delimiter:
+            parts.append("".join(current))
+            current = []
+            i += 1
+        else:
+            current.append(char)
+            i += 1
+    parts.append("".join(current))
+    return parts
+
+
+def _unescape_delimiter(text: str, delimiter: str) -> str:
+    """Replace escaped delimiters ('\\' + delimiter) with the literal delimiter."""
+    out: List[str] = []
+    i = 0
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text):
+            if text[i + 1] == delimiter:
+                out.append(delimiter)
+            else:
+                out.append(text[i])
+                out.append(text[i + 1])
+            i += 2
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
 def parse_sedfile(content: str) -> List[SedRule]:
     """
     Parse sed-style transformation rules from text content.
 
     Format:
-        s/pattern/replacement/[flags]
+        s<delim>pattern<delim>replacement<delim>[flags]
         # Comments are ignored
         Empty lines are ignored
+
+    Like sed, the delimiter is the character immediately following 's' and
+    can be any punctuation character (e.g. 's/old/new/g', 's#old#new#g',
+    's|old|new|g'). Use a non-'/' delimiter when the pattern or replacement
+    contains slashes (URLs, paths), or escape the delimiter with a backslash
+    (e.g. 's/http:\\/\\/old/http:\\/\\/new/g').
 
     Flags:
         g - Global replacement (replace all occurrences, not just first)
         i - Case-insensitive matching
+        m - Multiline mode (^ and $ match line boundaries)
+        s - Dotall mode (. matches newlines)
 
     Args:
         content: Text content containing sed rules
@@ -229,6 +283,9 @@ def parse_sedfile(content: str) -> List[SedRule]:
         'us-west-2'
         >>> rules[0].global_replace
         True
+        >>> rules = parse_sedfile("s#http://old#http://new#g")
+        >>> rules[0].pattern
+        'http://old'
     """
     rules = []
 
@@ -240,26 +297,46 @@ def parse_sedfile(content: str) -> List[SedRule]:
         if not line or line.startswith("#"):
             continue
 
-        # Parse sed command: s/pattern/replacement/[flags]
-        if not line.startswith("s/"):
+        # Parse sed command: s<delim>pattern<delim>replacement<delim>[flags]
+        if len(line) < 2 or line[0] != "s":
             raise TransformationError(
-                f"Line {line_num}: Sed rule must start with 's/' - got '{line[:20]}...'"
+                f"Line {line_num}: Sed rule must start with 's' followed by a "
+                f"delimiter (e.g. 's/old/new/g' or 's#old#new#g') - got '{line[:20]}...'"
             )
 
-        # Remove 's/' prefix
-        line = line[2:]
+        delimiter = line[1]
+        if delimiter.isalnum() or delimiter in ("\\", " ", "\t"):
+            raise TransformationError(
+                f"Line {line_num}: Invalid sed delimiter '{delimiter}' - use a "
+                f"punctuation character such as '/', '#', or '|'"
+            )
 
-        # Find delimiter (usually /, but could be others)
-        # We'll use / as the delimiter for simplicity
-        parts = line.split("/")
+        parts = _split_sed_rule(line[2:], delimiter)
 
         if len(parts) < 2:
             raise TransformationError(
-                f"Line {line_num}: Invalid sed format - expected 's/pattern/replacement/[flags]'"
+                f"Line {line_num}: Invalid sed format - expected "
+                f"'s{delimiter}pattern{delimiter}replacement{delimiter}[flags]'"
             )
 
+        if len(parts) > 3:
+            raise TransformationError(
+                f"Line {line_num}: Too many '{delimiter}' delimiters - escape "
+                f"literal '{delimiter}' characters as '\\{delimiter}' or use a "
+                f"different delimiter"
+            )
+
+        # Keep escapes in the pattern: the regex engine treats backslash-escaped
+        # punctuation (e.g. \/, \#) as the literal character. Unescaping here
+        # could change meaning for delimiters that are regex metacharacters
+        # (e.g. '|').
         pattern = parts[0]
-        replacement = parts[1]
+
+        # The replacement is not a regex: re.sub leaves unknown punctuation
+        # escapes intact, so '\#' would emit a literal backslash. Unescape the
+        # delimiter back to its literal character.
+        replacement = _unescape_delimiter(parts[1], delimiter)
+
         flags_str = parts[2] if len(parts) > 2 else ""
 
         # Parse flags
@@ -275,9 +352,10 @@ def parse_sedfile(content: str) -> List[SedRule]:
                 re_flags |= re.MULTILINE
             elif flag == "s":
                 re_flags |= re.DOTALL
-            elif flag:  # Ignore empty string but warn on unknown flags
-                # In production, you might want to log a warning here
-                pass
+            else:
+                raise TransformationError(
+                    f"Line {line_num}: Unknown sed flag '{flag}' - supported " f"flags: g, i, m, s"
+                )
 
         rules.append(
             SedRule(
